@@ -382,6 +382,84 @@ function normalizeSigwxCharts(ofp) {
   return result;
 }
 
+function normalizeVerticalProfileCharts(ofp) {
+  const result = [];
+  const seen = new Set();
+
+  const normalizeUrl = (value, directory = "") => {
+    if (!value) return "";
+    let url = String(value).trim().replace(/&amp;/g, "&");
+    if (!url) return "";
+    if (/^http:\/\//i.test(url)) url = `https://${url.slice(7)}`;
+    if (!/^https?:\/\//i.test(url)) {
+      const base = String(directory || "https://www.simbrief.com/ofp/uads/").replace(/\/$/, "");
+      url = `${base}/${url.replace(/^\/+/, "")}`;
+    }
+    return url;
+  };
+
+  const images = ofp?.images || ofp?.image || {};
+  const directory = firstValue(images?.directory, ofp?.images?.directory, "https://www.simbrief.com/ofp/uads/");
+
+  const add = (item, directoryOverride = directory) => {
+    if (!item) return;
+    const name = typeof item === "string"
+      ? item
+      : firstValue(item.name, item.title, item.label, item.description, item.caption, "");
+    const link = typeof item === "string"
+      ? item
+      : firstValue(item.link, item.url, item.href, item.src, item.file, item.filename, "");
+    const combined = `${name} ${link}`;
+    if (!/(vertical\s*profile|vertical[_-]?profile|v[_-]?profile|profile[_-]?vertical|elevation\s*profile|flight\s*profile)/i.test(combined)) return;
+    const url = normalizeUrl(link, directoryOverride);
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    result.push({ name: name || "Vertical Profile", url });
+  };
+
+  [images?.map, images?.maps, images?.image, images?.images, images?.vertical_profile, images?.verticalProfile, images?.vprofile, images?.v_profile, images?.profile, images?.flight_profile, images?.elevation_profile]
+    .flatMap(toArray)
+    .forEach((item) => add(item));
+
+  const walkKeys = (value) => {
+    if (!value || typeof value !== "object") return;
+    Object.entries(value).forEach(([key, child]) => {
+      if (/vertical|profile|elevation/i.test(key)) {
+        toArray(child).forEach((item) => {
+          if (typeof item === "string") add({ name: "Vertical Profile", link: item });
+          else add(item);
+        });
+      }
+      if (child && typeof child === "object") walkKeys(child);
+    });
+  };
+  walkKeys(images);
+  walkKeys(ofp);
+
+  recursiveObjectValues(images).forEach((item) => add(item));
+  recursiveObjectValues(ofp).forEach((item) => {
+    if (item && typeof item === "object") add(item);
+  });
+
+  try {
+    const serialized = JSON.stringify(ofp);
+    const filenameRegex = /([A-Za-z0-9_.-]*(?:vertical[_-]?profile|v[_-]?profile|profile[_-]?vertical|elevation[_-]?profile|flight[_-]?profile)[A-Za-z0-9_.-]*\.(?:gif|png|jpe?g|webp))/gi;
+    let match;
+    while ((match = filenameRegex.exec(serialized))) add({ name: "Vertical Profile", link: match[1] });
+
+    const absoluteRegex = /(https?:\/\/[^"'\s<>]*(?:vertical[_-]?profile|v[_-]?profile|profile[_-]?vertical|elevation[_-]?profile|flight[_-]?profile)[^"'\s<>]*)/gi;
+    while ((match = absoluteRegex.exec(serialized))) add({ name: "Vertical Profile", link: match[1] });
+
+    const html = String(ofp?.text?.plan_html || ofp?.text?.html || "");
+    const htmlRegex = /(?:src|href)=["']([^"']*(?:vertical\s*profile|vertical[_-]?profile|v[_-]?profile|profile[_-]?vertical|elevation[_-]?profile|flight[_-]?profile)[^"']*)["']/gi;
+    while ((match = htmlRegex.exec(html))) add({ name: "Vertical Profile", link: match[1] });
+  } catch {
+    // Keep structured results when string parsing is unavailable.
+  }
+
+  return result;
+}
+
 function rootOrNested(ofp, nested, keys) {
   const values = [];
   keys.forEach((key) => values.push(nested?.[key], ofp?.[key]));
@@ -461,6 +539,7 @@ function normalizeSimBriefOFP(ofp) {
     navlog,
     notams: normalizeNotams(ofp),
     sigwxCharts: normalizeSigwxCharts(ofp),
+    verticalProfileCharts: normalizeVerticalProfileCharts(ofp),
     origin,
     destination,
     alternate: alternates[0] || null,
@@ -770,8 +849,12 @@ export default function App() {
 
   const flight = useMemo(() => {
     const base = simbriefData || fallbackFlight();
-    if ((!base.sigwxCharts || base.sigwxCharts.length === 0) && base.raw) {
-      return { ...base, sigwxCharts: normalizeSigwxCharts(base.raw) };
+    if (base.raw) {
+      const sigwxCharts = base.sigwxCharts?.length ? base.sigwxCharts : normalizeSigwxCharts(base.raw);
+      const verticalProfileCharts = base.verticalProfileCharts?.length ? base.verticalProfileCharts : normalizeVerticalProfileCharts(base.raw);
+      if (sigwxCharts !== base.sigwxCharts || verticalProfileCharts !== base.verticalProfileCharts) {
+        return { ...base, sigwxCharts, verticalProfileCharts };
+      }
     }
     return base;
   }, [simbriefData]);
@@ -1064,18 +1147,34 @@ export default function App() {
 
       {weatherChartsOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={() => setWeatherChartsOpen(false)}>
-          <div className="flex max-h-[92dvh] w-full max-w-[1100px] flex-col overflow-hidden rounded-xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-3">
-              <div><div className="text-[17px] font-semibold">Significant Weather Charts</div><div className="text-[11px] text-gray-500">From the current SimBrief OFP</div></div>
-              <button onClick={() => setWeatherChartsOpen(false)} className="rounded-md p-2 hover:bg-gray-100"><X size={20} /></button>
+          <div className={`flex max-h-[92dvh] w-full max-w-[1100px] flex-col overflow-hidden rounded-xl shadow-2xl ${nightMode ? "bg-[#20242A] text-white" : "bg-white text-gray-900"}`} onClick={(event) => event.stopPropagation()}>
+            <div className={`flex shrink-0 items-center justify-between border-b px-4 py-3 ${nightMode ? "border-[#3A414A]" : "border-gray-200"}`}>
+              <div><div className="text-[17px] font-semibold">Flight Weather Charts</div><div className={`text-[11px] ${nightMode ? "text-gray-400" : "text-gray-500"}`}>From the current SimBrief OFP</div></div>
+              <button onClick={() => setWeatherChartsOpen(false)} className="rounded-md p-2 hover:bg-black/10"><X size={20} /></button>
+            </div>
+            <div className={`flex shrink-0 gap-2 border-b px-3 py-2 ${nightMode ? "border-[#3A414A] bg-[#191D22]" : "border-gray-200 bg-gray-50"}`}>
+              <button onClick={() => setWeatherChartsOpen(true)} className="rounded-md bg-[#0B1E48] px-3 py-2 text-[12px] font-semibold text-white">SIGWX ({flight.sigwxCharts?.length || 0})</button>
+              <button
+                className={`rounded-md border px-3 py-2 text-[12px] font-semibold ${nightMode ? "border-[#4A515B] bg-[#2A3038] text-gray-100" : "border-gray-300 bg-white text-gray-700"}`}
+                onClick={() => setWeatherChartsOpen("vertical")}
+              >Vertical Profile ({flight.verticalProfileCharts?.length || 0})</button>
             </div>
             <div className="min-h-0 overflow-y-auto bg-[#E5E7EB] p-3">
-              {flight.sigwxCharts?.length ? flight.sigwxCharts.map((chart, index) => (
-                <div key={`${chart.url}-${index}`} className="mb-3 overflow-hidden rounded-lg bg-white shadow-sm last:mb-0">
-                  <div className="border-b border-gray-200 px-3 py-2 text-[12px] font-semibold">{chart.name}</div>
-                  <img src={chart.url} alt={chart.name} className="block h-auto w-full" loading="eager" />
-                </div>
-              )) : <div className="p-10 text-center text-[13px] text-gray-500">This OFP does not contain a SIGWX chart.</div>}
+              {weatherChartsOpen === "vertical" ? (
+                flight.verticalProfileCharts?.length ? flight.verticalProfileCharts.map((chart, index) => (
+                  <div key={`${chart.url}-${index}`} className="mb-3 overflow-hidden rounded-lg bg-white shadow-sm last:mb-0">
+                    <div className="border-b border-gray-200 px-3 py-2 text-[12px] font-semibold">{chart.name}</div>
+                    <img src={chart.url} alt={chart.name} className="block h-auto w-full" loading="eager" />
+                  </div>
+                )) : <div className="p-10 text-center text-[13px] text-gray-500">This OFP does not contain a vertical profile chart. SimBrief Flight Maps must be enabled/detailed when generating the OFP.</div>
+              ) : (
+                flight.sigwxCharts?.length ? flight.sigwxCharts.map((chart, index) => (
+                  <div key={`${chart.url}-${index}`} className="mb-3 overflow-hidden rounded-lg bg-white shadow-sm last:mb-0">
+                    <div className="border-b border-gray-200 px-3 py-2 text-[12px] font-semibold">{chart.name}</div>
+                    <img src={chart.url} alt={chart.name} className="block h-auto w-full" loading="eager" />
+                  </div>
+                )) : <div className="p-10 text-center text-[13px] text-gray-500">This OFP does not contain a SIGWX chart.</div>
+              )}
             </div>
           </div>
         </div>
@@ -1711,8 +1810,9 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
           </g>
           {path && <path d={path} fill="none" stroke="#050505" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />}
           {firTransitions.map((transition, index) => (
-            <g key={`fir-${transition.fir}-${index}`} transform={`translate(${transition.x} ${transition.y})`}>
-              <circle r="3" fill="#67B95A" stroke="#FFFFFF" strokeWidth="1" />
+            <g key={`fir-${index}`} transform={`translate(${transition.x} ${transition.y})`}>
+              <line x1="0" y1="-16" x2="0" y2="16" stroke="#58A84F" strokeWidth="2" strokeDasharray="4 3" opacity="0.9" />
+              <circle r="2.5" fill="#58A84F" stroke="#FFFFFF" strokeWidth="1" />
             </g>
           ))}
         </svg>
@@ -1754,20 +1854,6 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
                 </span>
               )}
             </div>
-          </div>
-        );
-      })}
-
-      {showLabels && firTransitions.map((transition, index) => {
-        const left = `${Math.max(6, Math.min(94, (transition.x / Math.max(1, size.width)) * 100))}%`;
-        const top = `${Math.max(8, Math.min(92, (transition.y / Math.max(1, size.height)) * 100))}%`;
-        return (
-          <div
-            key={`fir-label-${transition.fir}-${index}`}
-            className="pointer-events-none absolute z-[7] -translate-x-1/2 -translate-y-1/2 rounded-sm border border-[#5AA653]/70 bg-white/85 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-[#4D9948] shadow-sm"
-            style={{ left, top }}
-          >
-            FIR {transition.fir}
           </div>
         );
       })}
