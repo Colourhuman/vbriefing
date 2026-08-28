@@ -400,6 +400,7 @@ function normalizeSimBriefOFP(ofp) {
     flightNumber,
     airline,
     callsign,
+    pilotName: firstValue(ofp?.pilot_name, ofp?.pilotName, ofp?.pilot, ofp?.crew?.pilot_name, ofp?.crew?.pilot, ofp?.user?.name, ofp?.username, general?.pilot_name),
     aircraftIcao: firstValue(aircraft.icaocode, aircraft.icao_code, ofp?.type),
     aircraftName: firstValue(aircraft.name, aircraft.type, ofp?.aircraft?.aircraft_name),
     registration: firstValue(aircraft.reg, aircraft.registration, ofp?.reg),
@@ -590,6 +591,15 @@ const NIGHT_MODE_CSS = `
 [data-night="true"] [class*="border-[#C4C6C8]"] { border-color:#3b4149 !important; }
 [data-night="true"] input { background:#171a1e !important; color:#f0f2f4 !important; border-color:#4a515a !important; }
 [data-night="true"] [class*="bg-[#0B1E48]"] { background:#10254d !important; }
+[data-night="true"] [class*="bg-[#D0D0D2]"],
+[data-night="true"] [class*="bg-[#F8F8F8]"],
+[data-night="true"] [class*="bg-[#F5F5F5]"],
+[data-night="true"] [class*="bg-[#F0F1F2]"] { background:#2b3036 !important; }
+[data-night="true"] img[src*="tile.openstreetmap.org"] { filter: grayscale(82%) saturate(35%) contrast(92%) brightness(46%) !important; }
+[data-night="true"] .lido-grid-lines line { stroke:#AEB5BC !important; opacity:.30 !important; }
+[data-night="true"] [class*="bg-[#F4F3ED]"],
+[data-night="true"] [class*="bg-[#E8E8E3]"] { background:rgba(25,29,34,.42) !important; }
+[data-night="true"] pre { color:#e4e7eb !important; }
 `;
 
 if (typeof document !== "undefined" && !document.getElementById("virtual-lido-night-mode")) {
@@ -598,6 +608,17 @@ if (typeof document !== "undefined" && !document.getElementById("virtual-lido-ni
   style.textContent = NIGHT_MODE_CSS;
   document.head.appendChild(style);
 }
+
+const DISPATCHER_NAMES = [
+  "Alex Morgan",
+  "Daniel Weber",
+  "Sophie Keller",
+  "Michael Fischer",
+  "Laura Bennett",
+  "Thomas Berger",
+  "Emma Collins",
+  "Jonas Richter",
+];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -628,6 +649,7 @@ export default function App() {
   const [copiedClearance, setCopiedClearance] = useState(false);
   const [showRouteLabels, setShowRouteLabels] = useState(true);
   const [nightMode, setNightMode] = useState(false);
+  const [dispatcherName] = useState(() => DISPATCHER_NAMES[Math.floor(Math.random() * DISPATCHER_NAMES.length)]);
   const touchStartX = useRef(null);
 
   const flight = simbriefData || fallbackFlight();
@@ -648,6 +670,7 @@ export default function App() {
   const effectiveFlight = firstValue(flight.flightNumber, flight.callsign, "-");
   const effectiveRoute = firstValue(flight.route, "");
   const effectiveAircraft = firstValue(flight.aircraftIcao, flight.aircraftName, "-");
+  const pilotName = firstValue(flight.pilotName, flight.pilot, flight.crewName, flight.username, simbriefInput, "Pilot in Command");
   const originIata = firstValue(flight.origin?.iata, importedOrigin);
   const destinationIata = firstValue(flight.destination?.iata, importedDestination);
 
@@ -948,7 +971,7 @@ export default function App() {
                   <FuelSummaryCard flight={flight} fuelOrdered={fuelOrdered} />
                   <DocumentsCard />
                 </div>
-                <ContactCard />
+                <ContactCard pilotName={pilotName} dispatcherName={dispatcherName} />
               </div>
             </div>
 
@@ -1522,6 +1545,11 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
 
       {view && path && (
         <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
+          <g className="lido-grid-lines">
+            {grid.map((line, index) => (
+              <line key={`grid-${line.type}-${line.value}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} stroke="#8A8F94" strokeWidth="0.8" strokeDasharray="2 4" opacity="0.34" />
+            ))}
+          </g>
           <path d={path} fill="none" stroke="white" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
           <path d={path} fill="none" stroke="#151515" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
@@ -1664,14 +1692,14 @@ function WeatherPanel({ airport, importedMetar, importedTaf, live, loading }) {
   const code = airportCode(airport);
   const metar = firstValue(live?.metar, importedMetar, "No METAR available");
   const taf = firstValue(live?.taf, importedTaf, "No TAF available");
-  return <div className="mt-3 overflow-hidden rounded-md bg-white"><div className="border-b border-gray-200 px-3 py-3"><div className="text-[16px] font-bold">{airport?.name || "UNKNOWN AIRPORT"}</div><div className="text-[12px] text-gray-500">{code}</div></div><div className="space-y-2 px-3 py-3"><WeatherRow label="Ceiling:" value="-" /><WeatherRow label="Visibility:" value={weatherVisibility(metar)} /><WeatherRow label="Wind:" value={weatherWind(metar)} /><WeatherRow label="Temperature:" value={weatherTemp(metar)} /></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 flex items-center justify-between text-[12px] text-gray-500"><span>METAR</span><span>{loading ? "updating..." : "current / OFP fallback"}</span></div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{metar}</pre></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 text-[12px] text-gray-500">TAF</div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{taf}</pre></div><button className="m-3 h-[45px] w-[calc(100%-24px)] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">View Weather Charts</button></div>;
+  return <div className="mt-3 overflow-hidden rounded-md bg-white"><div className="border-b border-gray-200 px-3 py-3"><div className="text-[16px] font-bold">{airport?.name || "UNKNOWN AIRPORT"}</div><div className="text-[12px] text-gray-500">{code}</div></div><div className="space-y-2 px-3 py-3"><WeatherRow label="Ceiling:" value="-" /><WeatherRow label="Visibility:" value={weatherVisibility(metar)} /><WeatherRow label="Wind:" value={weatherWind(metar)} /><WeatherRow label="Temperature:" value={weatherTemp(metar)} /></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 flex items-center justify-between text-[12px] text-gray-500"><span>METAR</span><span>{loading ? "updating..." : "current / OFP fallback"}</span></div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{metar}</pre></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 text-[12px] text-gray-500">TAF</div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{taf}</pre></div><button onClick={() => window.open("https://aviationweather.gov/sigwx/", "_blank", "noopener,noreferrer")} className="m-3 h-[45px] w-[calc(100%-24px)] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Significant Weather Charts</button></div>;
 }
 
 function FuelSummaryCard({ flight, fuelOrdered }) { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Fuel</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><div className="flex items-center justify-between bg-[#F5F5F5] px-3 py-3"><span className="text-[15px] text-gray-600">Planned Fuel (OFP):</span><strong className="text-[20px]">{flight.rampFuel || flight.takeoffFuel || "-"} kg</strong></div><div className="space-y-1 px-3 py-3"><FuelRow label="Trip Fuel:" value={`${flight.tripFuel || "-"} kg`} /><FuelRow label="Alternate:" value={`${flight.alternateFuel || "-"} kg`} /><FuelRow label="Reserve:" value={`${flight.reserveFuel || "-"} kg`} /><FuelRow label="Taxi:" value={`${flight.taxiFuel || "-"} kg`} /><FuelRow label="Landing:" value={`${flight.landingFuel || "-"} kg`} /></div></div><div className={`mt-3 rounded-md px-3 py-3 text-[13px] font-semibold ${fuelOrdered ? "bg-[#E6F6DA] text-[#17500D]" : "bg-white text-gray-600"}`}>{fuelOrdered ? "Fuel order: ORDERED" : "Fuel order: NOT ORDERED"}</div><button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open Fuel</button></section>; }
 
 function DocumentsCard() { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Additional Documents</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><DocumentRow title="Crew / Flight Documents" date="Imported from current OFP" /><DocumentRow title="MEL Restrictions" date="Operational documents" /><DocumentRow title="OFP / Flight Release" date="Current SimBrief release" last /></div><button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">View All Documents</button></section>; }
 
-function ContactCard() { return <section className="flex h-full flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Contact Information</h2><div className="mt-3 flex flex-1 flex-col overflow-hidden rounded-md bg-white"><div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">CREW</div><div className="px-3 py-3"><div className="text-[13px] text-gray-600">Pilot in Command / Captain</div><div className="mt-1 text-[14px] font-semibold">{window?.navigator ? "Current User" : "Pilot"}</div></div><div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">DISPATCH</div><div className="flex items-center justify-between px-3 py-3"><div><div className="text-[14px] font-semibold">SimBrief</div><div className="text-[12px] text-gray-600">Latest OFP</div></div><div className="flex gap-2"><button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white"><Phone size={18} /></button><button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white"><MessageSquare size={18} /></button></div></div><div className="border-t border-gray-200 px-3 py-4 text-[13px] text-gray-600">Data shown here is based on the imported flight.</div></div></section>; }
+function ContactCard({ pilotName, dispatcherName }) { return <section className="flex h-full flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Contact Information</h2><div className="mt-3 flex flex-1 flex-col overflow-hidden rounded-md bg-white"><div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">CREW</div><div className="px-3 py-3"><div className="text-[13px] text-gray-600">Pilot in Command / Captain</div><div className="mt-1 text-[14px] font-semibold">{pilotName}</div></div><div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">DISPATCH</div><div className="flex items-center justify-between px-3 py-3"><div><div className="text-[14px] font-semibold">{dispatcherName}</div><div className="text-[12px] text-gray-600">Flight Dispatcher</div></div><div className="flex gap-2"><button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white"><Phone size={18} /></button><button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white"><MessageSquare size={18} /></button></div></div><div className="border-t border-gray-200 px-3 py-4 text-[13px] text-gray-600">Crew and dispatch contacts for the current flight.</div></div></section>; }
 
 function AlternateCard({ airport, index, weatherLive }) { return <div className="rounded-lg border border-gray-200 bg-[#F8F8F8] p-4"><div className="flex items-center justify-between"><div><div className="text-[16px] font-bold">{airportCode(airport)}</div><div className="text-[12px] text-gray-500">Alternate {index + 1}</div></div><span className="rounded-full bg-[#8064A2] px-2.5 py-1 text-[10px] font-bold text-white">ALTN</span></div><div className="mt-3 space-y-2"><InfoRow label="Runway" value={airport.runway || "-"} /><InfoRow label="METAR" value={weatherLive?.metar || "OFP / unavailable"} /><InfoRow label="TAF" value={weatherLive?.taf || "OFP / unavailable"} /></div></div>; }
 
