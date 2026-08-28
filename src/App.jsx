@@ -584,6 +584,8 @@ export default function App() {
   const [fuelOrdered, setFuelOrdered] = useState(() => safeStorageGet(SIMBRIEF_FUEL_ORDER_KEY) === "true");
   const [checklist, setChecklist] = useState({ status: false, fuel: false, navlog: false, journey: false });
   const [actualTimes, setActualTimes] = useState({});
+  const [actualFuel, setActualFuel] = useState({});
+  const [clearanceData, setClearanceData] = useState({ departure: "", stand: "", squawk: "", initialClimb: "", atis: "" });
   const [copiedClearance, setCopiedClearance] = useState(false);
   const [showRouteLabels, setShowRouteLabels] = useState(true);
   const touchStartX = useRef(null);
@@ -724,6 +726,7 @@ export default function App() {
       safeStorageSet(SIMBRIEF_FUEL_ORDER_KEY, "false");
       setChecklist({ status: true, fuel: false, navlog: normalized.navlog?.length > 0, journey: false });
       setActualTimes({});
+      setActualFuel({});
       setShowSimBriefModal(false);
       await refreshLiveWeather(normalized);
     } catch (error) {
@@ -771,6 +774,8 @@ export default function App() {
     setWeatherLive({});
     setChecklist({ status: false, fuel: false, navlog: false, journey: false });
     setActualTimes({});
+    setActualFuel({});
+    setClearanceData({ departure: "", stand: "", squawk: "", initialClimb: "", atis: "" });
     safeStorageSet(SIMBRIEF_OFP_STORAGE_KEY, "");
     safeStorageSet(SIMBRIEF_FUEL_ORDER_KEY, "false");
   }
@@ -778,7 +783,8 @@ export default function App() {
   async function copyClearance() {
     const text = firstValue(
       flight.pdcText,
-      `${effectiveFlight}, cleared ${importedOrigin} to ${importedDestination}, ${flight.route || "as filed"}, maintain ${flight.cruiseAltitude || "filed altitude"}.`
+      flight.pdcText,
+      `${effectiveFlight}, cleared ${importedOrigin} to ${importedDestination}, ${flight.route || "as filed"}, ${clearanceData.initialClimb ? `initial climb ${clearanceData.initialClimb}, ` : ""}${clearanceData.squawk ? `squawk ${clearanceData.squawk}` : `maintain ${flight.cruiseAltitude || "filed altitude"}`}.`
     );
     try {
       await navigator.clipboard.writeText(text);
@@ -814,8 +820,8 @@ export default function App() {
   const currentNav = navigationItems.find((item) => item.id === activeTab) || navigationItems[0];
 
   return (
-    <div className="flex h-screen w-full flex-col overflow-hidden bg-[#E5E7EB] text-[#25282C]">
-      <header className="relative z-50 flex h-[58px] min-h-[58px] items-center border-b border-[#C4C6C8] bg-[#D1D3D4]">
+    <div className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-[#E5E7EB] text-[#25282C]">
+      <header className="relative z-50 grid h-[58px] min-h-[58px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-[#C4C6C8] bg-[#D1D3D4]">
         <div className="flex h-full min-w-0 items-center overflow-hidden">
           <button className="flex h-full w-[50px] shrink-0 items-center justify-center border-r border-[#C4C6C8] text-gray-700 hover:bg-black/5">
             <X size={23} />
@@ -825,12 +831,12 @@ export default function App() {
             <HeaderCell>{flight.registration || "-"}</HeaderCell>
             <HeaderCell>{effectiveAircraft}</HeaderCell>
             <HeaderCell>{importedOrigin} ({formatTime(flight.estimatedOut || flight.scheduledOut)}) - {importedDestination} ({formatTime(flight.estimatedIn || flight.scheduledIn)})</HeaderCell>
-            <HeaderCell>OFP 1/0/1</HeaderCell>
+            <div className="hidden h-full items-center px-3 md:flex"><span>OFP 1/0/1</span></div>
             <div className="px-2"><span className="rounded-[3px] bg-[#65C529] px-2 py-[3px] text-[10px] font-bold text-[#173D0B]">FINAL</span></div>
           </div>
         </div>
-        <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-[18px] font-semibold">{currentNav.label}</div>
-        <div className="ml-auto flex h-full shrink-0 items-center">
+        <div className="min-w-0 px-2 text-center text-[18px] font-semibold">{currentNav.label}</div>
+        <div className="ml-auto flex h-full min-w-0 shrink-0 items-center justify-end">
           <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5"><Languages size={22} strokeWidth={1.8} /></button>
           <button onClick={() => setShowSimBriefModal(true)} title="SimBrief" className="relative flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5">
             <Upload size={22} strokeWidth={1.8} />
@@ -917,7 +923,7 @@ export default function App() {
           <div className="h-full overflow-y-auto bg-[#E5E7EB] px-3 py-3">
             <div className="mx-auto max-w-[1100px] space-y-3 pb-4">
               <section className="overflow-hidden rounded-xl border border-[#D5D5D5] bg-white">
-                <div className="flex h-[50px] items-center justify-center bg-[#EEEEEE] text-[20px] font-semibold">{importedOrigin}/{originIata} <span className="mx-3 text-gray-400">···</span><span className="text-gray-500">✈</span><span className="mx-3 text-gray-400">···</span>{importedDestination}/{destinationIata}</div>
+                <div className="flex h-[50px] items-center justify-center bg-[#EEEEEE] text-[20px] font-semibold">{importedOrigin}/{originIata} <span className="mx-3 text-gray-400">···</span><span className="mx-1 h-px w-10 bg-gray-400" /><span className="mx-3 text-gray-400">···</span>{importedDestination}/{destinationIata}</div>
                 <div className="grid grid-cols-2 gap-y-5 px-5 py-6 sm:grid-cols-5">
                   <BriefingValue label="ATC" value={effectiveFlight} />
                   <BriefingValue label="STD" value={formatTime(flight.scheduledOut)} />
@@ -1019,7 +1025,23 @@ export default function App() {
               <section className="overflow-hidden rounded-xl border border-[#D0D0D0] bg-white">
                 <div className="flex items-center justify-between border-b border-[#D0D0D0] bg-[#F1F1F1] px-5 py-4"><div><h2 className="text-[19px] font-semibold">Clearances</h2><p className="mt-1 text-[12px] text-gray-500">{effectiveFlight} · {importedOrigin} → {importedDestination}</p></div><span className="rounded-full bg-[#69C92D] px-3 py-1 text-[11px] font-bold text-[#17500D]">READY</span></div>
                 <div className="space-y-3 p-4"><div className="rounded-lg border border-gray-200 bg-[#F5F5F5] p-4 font-mono text-[13px] leading-7 whitespace-pre-wrap">{flight.pdcText || `${effectiveFlight}, cleared ${importedOrigin} to ${importedDestination}\nvia ${flight.route || "as filed"}\nMaintain ${formatAltitudeValue(flight.cruiseAltitude)}\nDeparture frequency —\nSquawk —`}</div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><InfoPanel title="Flight Data"><InfoRow label="Aircraft" value={effectiveAircraft} /><InfoRow label="Registration" value={flight.registration || "-"} /><InfoRow label="Cruise" value={formatAltitudeValue(flight.cruiseAltitude)} /><InfoRow label="Cost Index" value={flight.costIndex || "-"} /></InfoPanel><InfoPanel title="Route"><div className="break-words text-[13px] leading-6 text-gray-700">{effectiveRouteText(importedOrigin, flight.route, importedDestination)}</div></InfoPanel></div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <InfoPanel title="Flight Data">
+                      <InfoRow label="Departure" value={importedOrigin} />
+                      <InfoRow label="Stand" value={<input value={clearanceData.stand} onChange={(e) => setClearanceData((c) => ({ ...c, stand: e.target.value }))} placeholder={flight.origin?.stand || "Stand"} className="h-8 w-[150px] rounded border border-gray-300 bg-white px-2 text-right text-[12px] font-semibold outline-none focus:border-[#526C9B]" />} />
+                      <InfoRow label="Aircraft" value={effectiveAircraft} />
+                      <InfoRow label="Initial Climb" value={<input value={clearanceData.initialClimb} onChange={(e) => setClearanceData((c) => ({ ...c, initialClimb: e.target.value }))} placeholder={formatAltitudeValue(flight.cruiseAltitude)} className="h-8 w-[150px] rounded border border-gray-300 bg-white px-2 text-right text-[12px] font-semibold outline-none focus:border-[#526C9B]" />} />
+                      <InfoRow label="Squawk" value={<input value={clearanceData.squawk} onChange={(e) => setClearanceData((c) => ({ ...c, squawk: e.target.value.replace(/\D/g, "").slice(0, 4) }))} inputMode="numeric" placeholder="----" className="h-8 w-[120px] rounded border border-gray-300 bg-white px-2 text-right text-[12px] font-semibold outline-none focus:border-[#526C9B]" />} />
+                      <InfoRow label="ATIS / Information" value={<input value={clearanceData.atis} onChange={(e) => setClearanceData((c) => ({ ...c, atis: e.target.value.toUpperCase() }))} placeholder="e.g. A" className="h-8 w-[120px] rounded border border-gray-300 bg-white px-2 text-right text-[12px] font-semibold outline-none focus:border-[#526C9B]" />} />
+                    </InfoPanel>
+                    <InfoPanel title="Route / Clearance">
+                      <InfoRow label="Route" value={flight.route || "AS FILED"} />
+                      <InfoRow label="Destination" value={importedDestination} />
+                      <InfoRow label="Initial Climb" value={clearanceData.initialClimb || formatAltitudeValue(flight.cruiseAltitude)} />
+                      <InfoRow label="Squawk" value={clearanceData.squawk || "----"} />
+                      <InfoRow label="Information" value={clearanceData.atis || "-"} />
+                    </InfoPanel>
+                  </div>
                   <div className="grid grid-cols-2 gap-3"><button onClick={copyClearance} className="flex h-[48px] items-center justify-center gap-2 rounded-md border border-gray-300 bg-white font-semibold hover:bg-gray-50"><Copy size={16} />{copiedClearance ? "Copied" : "Copy Clearance"}</button><button onClick={() => toggleChecklist("status")} className="h-[48px] rounded-md bg-[#0B1E48] font-semibold text-white hover:bg-[#10285C]">{checklist.status ? "Accepted" : "Accept Clearance"}</button></div>
                 </div>
               </section>
@@ -1032,7 +1054,7 @@ export default function App() {
             <div className="mx-auto max-w-[1400px] space-y-3">
               <section className="overflow-hidden rounded-xl border border-[#D0D0D0] bg-white">
                 <div className="flex items-center justify-between border-b border-[#D0D0D0] bg-[#F1F1F1] px-5 py-4"><div><h2 className="text-[19px] font-semibold">Navigation Log</h2><p className="mt-1 text-[12px] text-gray-500">{effectiveFlight} · {importedOrigin} → {importedDestination} · {effectiveAircraft}</p></div><div className="text-right text-[12px] text-gray-500">{navFixes.length} fixes</div></div>
-                <div className="overflow-x-auto"><table className="w-full min-w-[1480px] text-left text-[11px]"><thead className="bg-[#E9E9E9] text-[10px] font-semibold uppercase text-gray-600"><tr><th className="px-3 py-3">#</th><th className="px-3 py-3">Waypoint</th><th className="px-3 py-3">Stage</th><th className="px-3 py-3">Altitude</th><th className="px-3 py-3">IAS</th><th className="px-3 py-3">TAS</th><th className="px-3 py-3">Mach</th><th className="px-3 py-3">GS</th><th className="px-3 py-3">Wind</th><th className="px-3 py-3">W/C</th><th className="px-3 py-3">OAT</th><th className="px-3 py-3">Dist</th><th className="px-3 py-3">Leg Time</th><th className="px-3 py-3">Pln. Time</th><th className="px-3 py-3">Act. Time</th><th className="px-3 py-3">Time Delta</th><th className="px-3 py-3">Fuel Leg</th><th className="px-3 py-3">EFOB</th><th className="px-3 py-3">Airway</th></tr></thead><tbody className="divide-y divide-gray-200">{navFixes.length ? navFixes.map((fix, index) => <NavLogRow key={`${fix.ident}-${index}`} fix={fix} index={index} actualTime={actualTimes[index] || ""} onActualTimeChange={(value) => setActualTimes((current) => ({ ...current, [index]: value }))} />) : <tr><td colSpan={19} className="px-5 py-12 text-center text-[13px] text-gray-500">No navigation fixes were returned by SimBrief. Re-import the latest OFP.</td></tr>}</tbody></table></div>
+                <div className="overflow-x-auto"><table className="w-full min-w-[1480px] text-left text-[11px]"><thead className="bg-[#E9E9E9] text-[10px] font-semibold uppercase text-gray-600"><tr><th className="px-3 py-3">#</th><th className="px-3 py-3">Waypoint</th><th className="px-3 py-3">Stage</th><th className="px-3 py-3">Altitude</th><th className="px-3 py-3">IAS</th><th className="px-3 py-3">TAS</th><th className="px-3 py-3">Mach</th><th className="px-3 py-3">GS</th><th className="px-3 py-3">Wind</th><th className="px-3 py-3">W/C</th><th className="px-3 py-3">OAT</th><th className="px-3 py-3">Dist</th><th className="px-3 py-3">Leg Time</th><th className="px-3 py-3">Pln. Time</th><th className="px-3 py-3">Act. Time</th><th className="px-3 py-3">Time Delta</th><th className="px-3 py-3">Fuel Leg</th><th className="px-3 py-3">EFOB</th><th className="px-3 py-3">AFOB</th><th className="px-3 py-3">Airway</th></tr></thead><tbody className="divide-y divide-gray-200">{navFixes.length ? navFixes.map((fix, index) => <NavLogRow key={`${fix.ident}-${index}`} fix={fix} index={index} actualTime={actualTimes[index] || ""} onActualTimeChange={(value) => setActualTimes((current) => ({ ...current, [index]: value }))} actualFuel={actualFuel[index] || ""} onActualFuelChange={(value) => setActualFuel((current) => ({ ...current, [index]: value }))} />) : <tr><td colSpan={20} className="px-5 py-12 text-center text-[13px] text-gray-500">No navigation fixes were returned by SimBrief. Re-import the latest OFP.</td></tr>}</tbody></table></div>
               </section>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-4"><InfoPanel title="Route"><div className="break-words text-[12px] leading-6 text-gray-700">{effectiveRouteText(importedOrigin, flight.route, importedDestination)}</div></InfoPanel><InfoPanel title="Trip"><InfoRow label="Ground Distance" value={`${flight.groundDistance || "-"} NM`} /><InfoRow label="Air Distance" value={`${flight.airDistance || "-"} NM`} /><InfoRow label="Trip Time" value={flight.tripTime} /></InfoPanel><InfoPanel title="Times"><InfoRow label="Off-block" value={formatTime(flight.estimatedOut)} /><InfoRow label="Takeoff" value={formatTime(flight.estimatedOff)} /><InfoRow label="Landing" value={formatTime(flight.estimatedOn)} /><InfoRow label="On-block" value={formatTime(flight.estimatedIn)} /></InfoPanel><InfoPanel title="Fuel"><InfoRow label="Trip Fuel" value={flight.tripFuel || "-"} /><InfoRow label="Block Fuel" value={flight.rampFuel || flight.takeoffFuel || "-"} /><InfoRow label="Landing Fuel" value={flight.landingFuel || "-"} /></InfoPanel></div>
             </div>
@@ -1040,7 +1062,7 @@ export default function App() {
         )}
       </main>
 
-      <nav className="z-40 flex h-[70px] min-h-[70px] border-t border-[#C4C6C8] bg-[#D1D3D4]">
+      <nav style={{ paddingBottom: "env(safe-area-inset-bottom)" }} className="z-40 flex min-h-[70px] shrink-0 border-t border-[#C4C6C8] bg-[#D1D3D4]">
         {navigationItems.map((item) => {
           const Icon = item.icon;
           const active = activeTab === item.id;
@@ -1052,7 +1074,7 @@ export default function App() {
 }
 
 function HeaderCell({ children }) {
-  return <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">{children}</div>;
+  return <div className="flex h-full min-w-0 items-center border-r border-[#C4C6C8] px-3"><span className="max-w-[28vw] truncate">{children}</span></div>;
 }
 
 function FlightInfoCard({ flight, origin, destination, effectiveFlight, aircraft }) {
@@ -1178,14 +1200,15 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
   return (
     <div ref={containerRef} className={`relative h-full w-full overflow-hidden bg-[#E8E8E3] ${compact ? "rounded-md" : ""}`}>
       {tiles.map((tile) => (
-        <img key={`${tile.x}-${tile.y}-${tile.z}`} src={tile.url} alt="" className="pointer-events-none absolute select-none" style={{ left: tile.left, top: tile.top, width: 256, height: 256, opacity: 0.92 }} draggable={false} loading="eager" />
+        <img key={`${tile.x}-${tile.y}-${tile.z}`} src={tile.url} alt="" className="pointer-events-none absolute select-none" style={{ left: tile.left, top: tile.top, width: 256, height: 256, opacity: 0.86, filter: "grayscale(82%) saturate(55%) contrast(88%) brightness(108%)" }} draggable={false} loading="eager" />
       ))}
 
-      <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/28" />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.10),rgba(235,235,225,.18))]" />
+      <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/25" />
+      <div className="pointer-events-none absolute inset-0 opacity-55" style={{ backgroundImage: "linear-gradient(rgba(93,105,102,.16) 1px, transparent 1px), linear-gradient(90deg, rgba(93,105,102,.16) 1px, transparent 1px)", backgroundSize: compact ? "54px 54px" : "72px 72px" }} />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.08),rgba(235,235,225,.14))]" />
 
       {view && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="xMidYMid meet">
           <g stroke="#6F8177" strokeWidth="0.65" opacity="0.36">
             {grid.map((line, index) => <line key={`${line.type}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} />)}
           </g>
@@ -1197,13 +1220,13 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
       )}
 
       {view && path && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="xMidYMid meet">
           <path d={path} fill="none" stroke="white" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
           <path d={path} fill="none" stroke="#151515" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
           {arrows.map((arrow, index) => (
             <g key={`arrow-${index}`} transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`}>
-              <path d="M -8 -5 L 8 0 L -8 5 L -4 0 Z" fill="#F09A36" stroke="white" strokeWidth="1.8" strokeLinejoin="round" />
-              <path d="M -4 -2.4 L 4 0 L -4 2.4 Z" fill="white" />
+              <path d="M -11 -6 L 9 0 L -11 6 L -5 0 Z" fill="#F08A24" stroke="#FFFFFF" strokeWidth="2" strokeLinejoin="round" />
+              <path d="M -5 -2.5 L 4 0 L -5 2.5 L -2 0 Z" fill="#FFFFFF" />
             </g>
           ))}
         </svg>
@@ -1238,7 +1261,7 @@ function fitMapView(points, width, height) {
   let maxLon = Math.max(...lons);
   if (Math.abs(maxLat - minLat) < 0.25) { minLat -= 0.12; maxLat += 0.12; }
   if (Math.abs(maxLon - minLon) < 0.4) { minLon -= 0.2; maxLon += 0.2; }
-  const zoom = Math.max(2, Math.min(14, chooseZoom(minLat, maxLat, minLon, maxLon, width * 0.88, height * 0.88)));
+  const zoom = Math.max(2, Math.min(14, chooseZoom(minLat, maxLat, minLon, maxLon, width * 0.82, height * 0.82)));
   const centerLat = (minLat + maxLat) / 2;
   const centerLon = (minLon + maxLon) / 2;
   const center = geoToWorld(centerLat, centerLon, zoom);
@@ -1347,13 +1370,14 @@ function calculateTimeDelta(planned, actual) {
   return `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
 }
 
-function NavLogRow({ fix, index, actualTime, onActualTimeChange }) {
+function NavLogRow({ fix, index, actualTime, onActualTimeChange, actualFuel, onActualFuelChange }) {
   const ident = getIdent(fix, `FIX${index + 1}`);
   const planned = formatNavTime(firstValue(fix.time_total, fix.time, fix.eta, fix.ete, fix.total_time));
   const actual = actualTime || "";
   const delta = actual ? calculateTimeDelta(planned, actual) : "-";
+  const plannedFuel = firstValue(fix.fuel_totalused, fix.fuel_plan_onboard, fix.efob, fix.fob, "-");
   return (
-    <tr className="hover:bg-gray-50 align-middle">
+    <tr className="align-middle hover:bg-gray-50">
       <td className="px-3 py-2 text-gray-500">{index + 1}</td>
       <td className="px-3 py-2 font-semibold">{ident}</td>
       <td className="px-3 py-2">{firstValue(fix.stage, fix.phase, "-")}</td>
@@ -1369,17 +1393,14 @@ function NavLogRow({ fix, index, actualTime, onActualTimeChange }) {
       <td className="px-3 py-2">{formatNavTime(firstValue(fix.time_leg, fix.leg_time, fix.ete))}</td>
       <td className="px-3 py-2">{planned}</td>
       <td className="px-3 py-2">
-        <input
-          type="time"
-          value={actual}
-          onChange={(event) => onActualTimeChange(event.target.value)}
-          aria-label={`Actual time at ${ident}`}
-          className="h-[32px] w-[96px] rounded border border-gray-300 bg-white px-2 text-[12px] outline-none focus:border-[#526C9B]"
-        />
+        <input type="time" value={actual} onChange={(event) => onActualTimeChange(event.target.value)} aria-label={`Actual time at ${ident}`} className="h-[32px] w-[96px] rounded border border-gray-300 bg-white px-2 text-[12px] outline-none focus:border-[#526C9B]" />
       </td>
       <td className={`px-3 py-2 font-semibold ${delta !== "-" && delta !== "00:00" ? "text-[#B56A00]" : "text-gray-500"}`}>{delta}</td>
-      <td className="px-3 py-2">{firstValue(fix.fuel_leg, fix.fuel, fix.fob, "-")}</td>
-      <td className="px-3 py-2">{firstValue(fix.fuel_totalused, fix.fuel_plan_onboard, fix.efob, fix.fob, "-")}</td>
+      <td className="px-3 py-2">{firstValue(fix.fuel_leg, fix.fuel, "-")}</td>
+      <td className="px-3 py-2">{plannedFuel}</td>
+      <td className="px-3 py-2">
+        <input type="number" min="0" step="1" inputMode="decimal" value={actualFuel} onChange={(event) => onActualFuelChange(event.target.value)} aria-label={`Actual fuel on board at ${ident}`} placeholder="AFOB" className="h-[32px] w-[90px] rounded border border-gray-300 bg-white px-2 text-[12px] outline-none focus:border-[#526C9B]" />
+      </td>
       <td className="px-3 py-2">{firstValue(fix.via_airway, fix.airway, "-")}</td>
     </tr>
   );
