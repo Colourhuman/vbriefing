@@ -2062,8 +2062,7 @@ function DynamicRoutePreview({ flight, compact = false }) {
             <button className="h-7 w-7 text-[16px] text-gray-700">+</button>
             <button className="h-7 w-7 border-t border-gray-200 text-[16px] text-gray-700">−</button>
           </div>
-        </>
-      )
+        </>)}
 
       <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${mapWidth} ${mapHeight}`} preserveAspectRatio="none">
         <defs>
