@@ -835,7 +835,7 @@ export default function App() {
             <div className="px-2"><span className="rounded-[3px] bg-[#65C529] px-2 py-[3px] text-[10px] font-bold text-[#173D0B]">FINAL</span></div>
           </div>
         </div>
-        <div className="min-w-0 px-2 text-center text-[18px] font-semibold">{currentNav.label}</div>
+        <div className="z-10 min-w-0 whitespace-nowrap bg-[#D1D3D4] px-3 text-center text-[18px] font-semibold">{currentNav.label}</div>
         <div className="ml-auto flex h-full min-w-0 shrink-0 items-center justify-end">
           <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5"><Languages size={22} strokeWidth={1.8} /></button>
           <button onClick={() => setShowSimBriefModal(true)} title="SimBrief" className="relative flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5">
@@ -1050,13 +1050,310 @@ export default function App() {
         )}
 
         {activeTab === "navlog" && (
-          <div className="h-full overflow-y-auto bg-[#E5E7EB] p-3">
-            <div className="mx-auto max-w-[1400px] space-y-3">
-              <section className="overflow-hidden rounded-xl border border-[#D0D0D0] bg-white">
-                <div className="flex items-center justify-between border-b border-[#D0D0D0] bg-[#F1F1F1] px-5 py-4"><div><h2 className="text-[19px] font-semibold">Navigation Log</h2><p className="mt-1 text-[12px] text-gray-500">{effectiveFlight} · {importedOrigin} → {importedDestination} · {effectiveAircraft}</p></div><div className="text-right text-[12px] text-gray-500">{navFixes.length} fixes</div></div>
-                <div className="overflow-x-auto"><table className="w-full min-w-[1480px] text-left text-[11px]"><thead className="bg-[#E9E9E9] text-[10px] font-semibold uppercase text-gray-600"><tr><th className="px-3 py-3">#</th><th className="px-3 py-3">Waypoint</th><th className="px-3 py-3">Stage</th><th className="px-3 py-3">Altitude</th><th className="px-3 py-3">IAS</th><th className="px-3 py-3">TAS</th><th className="px-3 py-3">Mach</th><th className="px-3 py-3">GS</th><th className="px-3 py-3">Wind</th><th className="px-3 py-3">W/C</th><th className="px-3 py-3">OAT</th><th className="px-3 py-3">Dist</th><th className="px-3 py-3">Leg Time</th><th className="px-3 py-3">Pln. Time</th><th className="px-3 py-3">Act. Time</th><th className="px-3 py-3">Time Delta</th><th className="px-3 py-3">Fuel Leg</th><th className="px-3 py-3">EFOB</th><th className="px-3 py-3">AFOB</th><th className="px-3 py-3">Airway</th></tr></thead><tbody className="divide-y divide-gray-200">{navFixes.length ? navFixes.map((fix, index) => <NavLogRow key={`${fix.ident}-${index}`} fix={fix} index={index} actualTime={actualTimes[index] || ""} onActualTimeChange={(value) => setActualTimes((current) => ({ ...current, [index]: value }))} actualFuel={actualFuel[index] || ""} onActualFuelChange={(value) => setActualFuel((current) => ({ ...current, [index]: value }))} />) : <tr><td colSpan={20} className="px-5 py-12 text-center text-[13px] text-gray-500">No navigation fixes were returned by SimBrief. Re-import the latest OFP.</td></tr>}</tbody></table></div>
+          <div className="h-full overflow-y-auto bg-[#DDE0E3]">
+            <div className="mx-auto max-w-[1180px]">
+
+              {/* Lido-style fuel / reserve strip */}
+              <section className="border-b border-[#C2C5C8] bg-[#F0F1F2] px-5 pt-4">
+                <div className="h-[18px] overflow-hidden rounded-[3px] bg-[#17345F] shadow-inner">
+                  <div className="relative h-full w-full">
+                    <div
+                      className="absolute left-0 top-0 h-full"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.max(
+                            7,
+                            (toNumber(flight.reserveFuel) /
+                              Math.max(
+                                1,
+                                toNumber(flight.rampFuel || flight.takeoffFuel || flight.reserveFuel)
+                              )) *
+                              100
+                          )
+                        )}%`,
+                        backgroundImage:
+                          "repeating-linear-gradient(-45deg, #C53C48 0px, #C53C48 5px, #18345F 5px, #18345F 10px)",
+                      }}
+                    />
+                    <div
+                      className="absolute top-[-2px] bottom-[-2px] w-[4px] rounded-full bg-[#F0A33A]"
+                      style={{
+                        left: `${Math.min(
+                          98,
+                          Math.max(
+                            3,
+                            (toNumber(flight.reserveFuel) /
+                              Math.max(
+                                1,
+                                toNumber(flight.rampFuel || flight.takeoffFuel || flight.reserveFuel)
+                              )) *
+                              100
+                          )
+                        )}%`,
+                      }}
+                    />
+                    <div
+                      className="absolute top-[-2px] bottom-[-2px] w-[4px] rounded-full bg-[#6FBC41]"
+                      style={{
+                        left: `${Math.min(
+                          99,
+                          Math.max(
+                            5,
+                            ((toNumber(flight.reserveFuel) + toNumber(flight.landingFuel)) /
+                              Math.max(
+                                1,
+                                toNumber(flight.rampFuel || flight.takeoffFuel || flight.reserveFuel)
+                              )) *
+                              100
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-[11px] font-semibold text-[#374151]">
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#C53C48]" />
+                    FINAL RESERVE {formatNumber(flight.reserveFuel)} kg
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-3 w-[3px] rounded-full bg-[#F0A33A]" />
+                    TOTAL RESERVE {formatNumber(toNumber(flight.reserveFuel) + toNumber(flight.alternateFuel))} kg
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-3 w-[3px] rounded-full bg-[#6FBC41]" />
+                    LANDING {formatNumber(flight.landingFuel)} kg
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-[1.5fr_.65fr_1fr_1fr_1fr_.95fr_1fr] items-end border-t border-[#D1D4D7] pb-2 pt-1 text-[11px] font-semibold text-gray-600">
+                  <span>WPT ({navFixes.length})</span>
+                  <span>DTD (NM)</span>
+                  <span>Pln.Time</span>
+                  <span>Act.Time</span>
+                  <span>Time Delta</span>
+                  <span>MFOB (kg)</span>
+                  <span>AFOB (kg)</span>
+                </div>
               </section>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-4"><InfoPanel title="Route"><div className="break-words text-[12px] leading-6 text-gray-700">{effectiveRouteText(importedOrigin, flight.route, importedDestination)}</div></InfoPanel><InfoPanel title="Trip"><InfoRow label="Ground Distance" value={`${flight.groundDistance || "-"} NM`} /><InfoRow label="Air Distance" value={`${flight.airDistance || "-"} NM`} /><InfoRow label="Trip Time" value={flight.tripTime} /></InfoPanel><InfoPanel title="Times"><InfoRow label="Off-block" value={formatTime(flight.estimatedOut)} /><InfoRow label="Takeoff" value={formatTime(flight.estimatedOff)} /><InfoRow label="Landing" value={formatTime(flight.estimatedOn)} /><InfoRow label="On-block" value={formatTime(flight.estimatedIn)} /></InfoPanel><InfoPanel title="Fuel"><InfoRow label="Trip Fuel" value={flight.tripFuel || "-"} /><InfoRow label="Block Fuel" value={flight.rampFuel || flight.takeoffFuel || "-"} /><InfoRow label="Landing Fuel" value={flight.landingFuel || "-"} /></InfoPanel></div>
+
+              {/* Actual Lido-like waypoint cards */}
+              <div className="space-y-[2px] px-1 pb-24">
+                {navFixes.length ? (
+                  navFixes.map((fix, index) => {
+                    const ident = getIdent(fix, `FIX${index + 1}`);
+                    const skipped =
+                      String(ident).startsWith("(") ||
+                      String(ident).toUpperCase().includes("AB_");
+                    const plannedTime = firstValue(
+                      fix.time_total,
+                      fix.time,
+                      fix.eta,
+                      fix.ete,
+                      ""
+                    );
+                    const mFOB = firstValue(
+                      fix.fuel_plan_onboard,
+                      fix.fuel_remaining,
+                      fix.fob,
+                      fix.efob,
+                      ""
+                    );
+                    const airway = firstValue(
+                      fix.via_airway,
+                      fix.airway,
+                      fix.airway_name,
+                      "DCT"
+                    );
+                    const dist = firstValue(
+                      fix.distance_to_dest,
+                      fix.dtd,
+                      fix.distance,
+                      fix.distance_nm,
+                      "-"
+                    );
+                    const dtw = firstValue(
+                      fix.distance_to_go,
+                      fix.dtw,
+                      fix.dist_to_go,
+                      ""
+                    );
+                    const msa = firstValue(
+                      fix.msa,
+                      fix.minimum_safe_altitude,
+                      "-"
+                    );
+                    const gs = firstValue(
+                      fix.groundspeed,
+                      fix.gs,
+                      "-"
+                    );
+                    const tas = firstValue(
+                      fix.true_airspeed,
+                      fix.tas,
+                      "-"
+                    );
+                    const ias = firstValue(
+                      fix.ind_airspeed,
+                      fix.ias,
+                      "-"
+                    );
+                    const mach = firstValue(fix.mach, "-");
+                    const oat = firstValue(
+                      fix.oat,
+                      fix.temperature,
+                      fix.temp,
+                      fix.oat_temp,
+                      "-"
+                    );
+                    const coordLat = fix.lat;
+                    const coordLon = fix.lon;
+                    const wind = fixWind(fix);
+                    const stage = firstValue(fix.stage, fix.phase, "");
+                    const legTime = formatNavTime(
+                      firstValue(fix.time_leg, fix.leg_time, fix.ete, "")
+                    );
+
+                    return (
+                      <div
+                        key={`${ident}-${index}`}
+                        className={`overflow-hidden rounded-[4px] border border-[#C5C8CB] shadow-[0_1px_2px_rgba(0,0,0,.12)] ${
+                          skipped ? "bg-[#B9BBBE]" : "bg-[#D5D7D9]"
+                        }`}
+                      >
+                        {/* Main waypoint line */}
+                        <div className="relative grid min-h-[72px] grid-cols-[1.5fr_.65fr_1fr_1fr_1fr_.95fr_1fr_auto] items-center gap-2 px-3 py-2">
+                          <div
+                            className={`absolute left-0 top-0 bottom-0 w-[5px] ${
+                              index === 0 ? "bg-[#294D89]" : "bg-transparent"
+                            }`}
+                          />
+                          <div className="pl-2">
+                            <div className="text-[26px] leading-none font-semibold tracking-tight text-[#1B2430]">
+                              {ident}
+                            </div>
+                            {stage && (
+                              <div className="mt-1 text-[10px] font-semibold uppercase text-gray-500">
+                                {stage}
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-[14px] font-medium text-[#303942]">{dist}</div>
+                          <div className="text-[15px] font-medium">
+                            {formatNavTime(plannedTime)}
+                            <div className="mt-[2px] w-fit border-b-2 border-dotted border-[#667085] text-[9px] text-transparent">
+                              --
+                            </div>
+                          </div>
+                          <div>
+                            <input
+                              type="time"
+                              value={actualTimes[index] || ""}
+                              onChange={(event) =>
+                                setActualTimes((current) => ({
+                                  ...current,
+                                  [index]: event.target.value,
+                                }))
+                              }
+                              aria-label={`Actual time at ${ident}`}
+                              className="h-[46px] w-full rounded-md border border-gray-200 bg-white px-2 text-center text-[12px] text-[#303942] outline-none focus:border-[#526C9B]"
+                            />
+                          </div>
+                          <div className="flex h-[46px] items-center justify-center rounded-md bg-white/30 px-2 text-[12px] font-semibold text-gray-500">
+                            {actualTimes[index] ? calculateTimeDelta(formatNavTime(plannedTime), actualTimes[index]) : "--"}
+                          </div>
+                          <div className="text-[15px] font-medium">{formatNumber(mFOB)}</div>
+                          <div>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              inputMode="decimal"
+                              value={actualFuel[index] || ""}
+                              onChange={(event) =>
+                                setActualFuel((current) => ({
+                                  ...current,
+                                  [index]: event.target.value,
+                                }))
+                              }
+                              aria-label={`Actual fuel on board at ${ident}`}
+                              placeholder="AFOB"
+                              className="h-[46px] w-full rounded-md border border-gray-200 bg-white px-2 text-center text-[12px] text-[#303942] outline-none focus:border-[#526C9B]"
+                            />
+                          </div>
+                          <div className="pr-1 text-[18px] text-gray-400">›</div>
+                        </div>
+
+                        {/* Route / airway strip */}
+                        <div className="grid grid-cols-4 gap-2 border-y border-[#C4C6C9] bg-[#E9EAEB] px-3 py-[4px] text-[11px] font-semibold text-[#333B44]">
+                          <span className="pl-2">{airway}</span>
+                          <span>{firstValue(fix.wind_component, fix.wc, `${wind}`)}</span>
+                          <span>DTW {dtw || "-"}</span>
+                          <span>FL {fixAltitude(fix).replace("FL", "")} &nbsp; MSA {String(msa).replace("FL", "")}</span>
+                        </div>
+
+                        {/* Expanded details — matches the reference's dense data band */}
+                        <div className="grid grid-cols-3 gap-y-1 px-4 py-2 text-[11px] text-[#4A5561]">
+                          <div>
+                            Coordinate{" "}
+                            <strong className="text-[#333B44]">
+                              {Number.isFinite(coordLat) && Number.isFinite(coordLon)
+                                ? `${coordLat.toFixed(2)} / ${coordLon.toFixed(2)}`
+                                : "-"}
+                            </strong>
+                          </div>
+                          <div>
+                            OAT <strong className="text-[#333B44]">{oat === "-" ? "-" : `${oat} °C`}</strong>
+                          </div>
+                          <div>
+                            Wind <strong className="text-[#333B44]">{wind}</strong>
+                          </div>
+                          <div>
+                            Windshear Rate <strong className="text-[#333B44]">{firstValue(fix.windshear_rate, "NA")}</strong>
+                          </div>
+                          <div>
+                            GS/TAS <strong className="text-[#333B44]">{gs}/{tas}</strong>
+                          </div>
+                          <div>
+                            IAS/Mach <strong className="text-[#333B44]">{ias}/{mach}</strong>
+                          </div>
+                          <div className="col-span-3 flex justify-between border-t border-[#C9CDD1] pt-1 text-[10px] text-gray-500">
+                            <span>Leg {legTime}</span>
+                            <span>Total {formatNavTime(firstValue(fix.time_total, fix.time, fix.total_time, ""))}</span>
+                            <span>Fuel delta {firstValue(fix.fuel_leg, fix.fuel, "-")}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-md border border-[#C9CDD1] bg-white px-5 py-12 text-center text-[13px] text-gray-500">
+                    No navigation fixes were returned by SimBrief. Re-import the latest OFP.
+                  </div>
+                )}
+
+                {/* Bottom controls, matching the reference */}
+                <div className="mt-2 overflow-hidden rounded-md border border-[#C4C7CA] bg-[#D5D7D9]">
+                  <div className="flex items-center justify-center border-b border-[#C3C6C9] bg-[#E8E9EA] py-2 text-[12px] font-semibold text-[#30363D]">
+                    ▴ Hide skipped waypoints (
+                    {navFixes.filter((fix) => {
+                      const id = getIdent(fix, "");
+                      return String(id).startsWith("(") || String(id).toUpperCase().includes("AB_");
+                    }).length}
+                    )
+                  </div>
+                  <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto_auto] gap-2 p-2">
+                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">N000 00.0</div>
+                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">E000 00.0</div>
+                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">00:00</div>
+                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">000000</div>
+                    <button className="rounded-full bg-white/35 px-3 text-gray-400">−</button>
+                    <button className="rounded-full bg-white/35 px-3 text-gray-400">+</button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1170,29 +1467,6 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
     return lines;
   }, [view, size.width, size.height]);
 
-  const arrows = useMemo(() => {
-    if (pointsForRoute.length < 2) return [];
-    const result = [];
-    const interval = compact ? 115 : 145;
-    let carry = interval * 0.35;
-    for (let i = 1; i < pointsForRoute.length; i += 1) {
-      const a = pointsForRoute[i - 1];
-      const b = pointsForRoute[i];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.hypot(dx, dy);
-      if (len < 4) continue;
-      const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-      let distance = carry;
-      while (distance < len) {
-        const t = distance / len;
-        result.push({ x: a.x + dx * t, y: a.y + dy * t, angle });
-        distance += interval;
-      }
-      carry = Math.max(20, distance - len);
-    }
-    return result;
-  }, [pointsForRoute, compact]);
 
   const latLabel = (value) => `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}°${value >= 0 ? "N" : "S"}`;
   const lonLabel = (value) => `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}°${value >= 0 ? "E" : "W"}`;
@@ -1200,15 +1474,23 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
   return (
     <div ref={containerRef} className={`relative h-full w-full overflow-hidden bg-[#E8E8E3] ${compact ? "rounded-md" : ""}`}>
       {tiles.map((tile) => (
-        <img key={`${tile.x}-${tile.y}-${tile.z}`} src={tile.url} alt="" className="pointer-events-none absolute select-none" style={{ left: tile.left, top: tile.top, width: 256, height: 256, opacity: 0.86, filter: "grayscale(82%) saturate(55%) contrast(88%) brightness(108%)" }} draggable={false} loading="eager" />
+        <img key={`${tile.x}-${tile.y}-${tile.z}`} src={tile.url} alt="" className="pointer-events-none absolute z-0 select-none" style={{ left: tile.left, top: tile.top, width: 256, height: 256, opacity: 0.86, filter: "grayscale(82%) saturate(55%) contrast(88%) brightness(108%)" }} draggable={false} loading="eager" />
       ))}
 
       <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/25" />
-      <div className="pointer-events-none absolute inset-0 opacity-55" style={{ backgroundImage: "linear-gradient(rgba(93,105,102,.16) 1px, transparent 1px), linear-gradient(90deg, rgba(93,105,102,.16) 1px, transparent 1px)", backgroundSize: compact ? "54px 54px" : "72px 72px" }} />
+      <div
+        className="pointer-events-none absolute inset-0 z-[2]"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(84,96,91,.18) 1px, transparent 1px), linear-gradient(90deg, rgba(84,96,91,.18) 1px, transparent 1px)",
+          backgroundSize: compact ? "52px 52px" : "64px 64px",
+          backgroundPosition: "center center",
+        }}
+      />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.08),rgba(235,235,225,.14))]" />
 
       {view && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="xMidYMid meet">
+        <svg className="pointer-events-none absolute inset-0 z-[3] h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
           <g stroke="#6F8177" strokeWidth="0.65" opacity="0.36">
             {grid.map((line, index) => <line key={`${line.type}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} />)}
           </g>
@@ -1220,25 +1502,47 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
       )}
 
       {view && path && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="xMidYMid meet">
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
           <path d={path} fill="none" stroke="white" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
           <path d={path} fill="none" stroke="#151515" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
-          {arrows.map((arrow, index) => (
-            <g key={`arrow-${index}`} transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`}>
-              <path d="M -11 -6 L 9 0 L -11 6 L -5 0 Z" fill="#F08A24" stroke="#FFFFFF" strokeWidth="2" strokeLinejoin="round" />
-              <path d="M -5 -2.5 L 4 0 L -5 2.5 L -2 0 Z" fill="#FFFFFF" />
-            </g>
-          ))}
-        </svg>
+            </svg>
       )}
 
       {airportPoints.map((airport) => {
-        const fill = airport.color === "green" ? "#65C52D" : airport.color === "orange" ? "#F2A243" : "#7B6494";
+        const fill =
+          airport.color === "green"
+            ? "#67BF42"
+            : airport.color === "orange"
+              ? "#E9A044"
+              : "#858585";
         return (
-          <div key={`${airport.kind}-${airport.label}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: airport.point.x, top: airport.point.y }}>
-            <div className="flex flex-col items-center">
-              <MapPin size={31} fill={fill} color={fill} strokeWidth={1.4} />
-              {showLabels && <span className="-mt-1 rounded bg-white/88 px-1 py-0.5 text-[9px] font-bold shadow-sm" style={{ color: fill }}>{airport.label}</span>}
+          <div
+            key={`${airport.kind}-${airport.label}`}
+            className="absolute z-[5] -translate-x-1/2 -translate-y-1/2"
+            style={{ left: airport.point.x, top: airport.point.y }}
+          >
+            <div className="relative flex items-center justify-center">
+              <div
+                className="relative h-[28px] w-[28px] rounded-full shadow-[0_1px_3px_rgba(0,0,0,.22)]"
+                style={{ backgroundColor: fill }}
+              >
+                <div className="absolute left-1/2 top-1/2 h-[9px] w-[9px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
+                <div
+                  className="absolute left-1/2 top-[23px] h-[11px] w-[11px] -translate-x-1/2 rotate-45 rounded-[1px]"
+                  style={{ backgroundColor: fill }}
+                />
+              </div>
+              {showLabels && (
+                <span
+                  className="absolute left-[25px] top-[4px] whitespace-nowrap text-[11px] font-semibold tracking-tight"
+                  style={{
+                    color: fill,
+                    textShadow: "0 1px 2px rgba(255,255,255,.95)",
+                  }}
+                >
+                  {airport.label}
+                </span>
+              )}
             </div>
           </div>
         );
@@ -1299,8 +1603,8 @@ function makeTiles(zoom, bounds, width, height) {
   const topLeft = { x: center.x - width / 2, y: center.y - height / 2 };
   const tiles = [];
   const tileCount = 2 ** zoom;
-  for (let y = Math.max(0, minY - 1); y <= Math.min(tileCount - 1, maxY + 1); y += 1) {
-    for (let x = minX - 1; x <= maxX + 1; x += 1) {
+  for (let y = Math.max(0, minY - 2); y <= Math.min(tileCount - 1, maxY + 2); y += 1) {
+    for (let x = minX - 2; x <= maxX + 2; x += 1) {
       const wrappedX = ((x % tileCount) + tileCount) % tileCount;
       tiles.push({ z: zoom, x: wrappedX, y, left: x * 256 - topLeft.x, top: y * 256 - topLeft.y, url: `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${y}.png` });
     }
