@@ -760,27 +760,241 @@ BKN250
           </div>
         )}
 
-        {/* ================= OTHER TABS ================= */}
-        {activeTab !== "dashboard" && activeTab !== "briefing" && activeTab !== "map" && (
-          <div className="flex h-full items-center justify-center bg-[#E5E7EB] p-5">
-            <div className="flex h-full w-full items-center justify-center rounded-lg border border-gray-300 bg-[#F1F1F1]">
-              {activeTab === "clearances" && (
-                <div className="text-center">
-                  <GitFork size={45} className="mx-auto mb-3 text-gray-400" />
-                  <h2 className="text-xl font-semibold text-gray-600">Clearances</h2>
+                {/* ================= CLEARANCES TAB ================= */}
+        {activeTab === "clearances" && (
+          <div className="h-full w-full overflow-y-auto bg-[#E5E7EB] p-3">
+            <div className="mx-auto max-w-[1100px] space-y-3">
+
+              <section className="rounded-xl border border-[#D0D0D0] bg-[#F1F1F1]">
+                <div className="border-b border-[#D0D0D0] px-5 py-4">
+                  <h2 className="text-[19px] font-semibold">
+                    Clearances
+                  </h2>
+                  <p className="mt-1 text-[12px] text-gray-500">
+                    Flight EUR4425 · KEWR → KDCA
+                  </p>
                 </div>
-              )}
-              {activeTab === "navlog" && (
-                <div className="text-center">
-                  <List size={45} className="mx-auto mb-3 text-gray-400" />
-                  <h2 className="text-xl font-semibold text-gray-600">NavLog</h2>
+
+                <div className="p-4 space-y-3">
+
+                  <div className="rounded-lg border border-[#D5D5D5] bg-white">
+                    <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+                      <div>
+                        <div className="text-[15px] font-semibold">
+                          ATC Clearance
+                        </div>
+                        <div className="text-[11px] text-gray-500">
+                          IFR Clearance
+                        </div>
+                      </div>
+
+                      <span className="rounded-full bg-[#69C92D] px-3 py-1 text-[11px] font-bold text-[#17500D]">
+                        READY
+                      </span>
+                    </div>
+
+                    <div className="p-4">
+                      <div className="rounded-md bg-[#F4F4F4] p-4 font-mono text-[13px] leading-[1.7]">
+                        <div>EUR4425, cleared to Washington Reagan</div>
+                        <div>via BIGGY departure, then as filed</div>
+                        <div>Maintain 5000 feet, expect FL350</div>
+                        <div>Departure frequency 119.2</div>
+                        <div>Squawk 4425</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+
+                    <div className="rounded-lg border border-[#D5D5D5] bg-white p-4">
+                      <div className="mb-3 text-[14px] font-semibold">
+                        Clearance Data
+                      </div>
+
+                      <div className="space-y-3">
+                        <WeatherRow label="Destination" value="KDCA" />
+                        <WeatherRow label="Departure" value="KEWR" />
+                        <WeatherRow label="SID" value="BIGGY4" />
+                        <WeatherRow label="Cruise" value="FL350" />
+                        <WeatherRow label="Squawk" value="4425" />
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-[#D5D5D5] bg-white p-4">
+                      <div className="mb-3 text-[14px] font-semibold">
+                        Frequencies
+                      </div>
+
+                      <div className="space-y-3">
+                        <WeatherRow label="DELIVERY" value="121.85" />
+                        <WeatherRow label="GROUND" value="121.70" />
+                        <WeatherRow label="TOWER" value="118.30" />
+                        <WeatherRow label="DEPARTURE" value="119.20" />
+                        <WeatherRow label="CENTER" value="125.32" />
+                      </div>
+                    </div>
+
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button className="h-[48px] rounded-md border border-gray-300 bg-white font-semibold hover:bg-gray-50">
+                      Copy Clearance
+                    </button>
+
+                    <button className="h-[48px] rounded-md bg-[#0B1E48] font-semibold text-white hover:bg-[#10285C]">
+                      Mark Read
+                    </button>
+                  </div>
+
                 </div>
-              )}
+              </section>
+
             </div>
           </div>
         )}
 
-      </main>
+        {/* ================= NAVLOG TAB ================= */}
+        {activeTab === "navlog" && (
+          <div className="h-full w-full overflow-y-auto bg-[#E5E7EB] p-3">
+            <div className="mx-auto max-w-[1200px] space-y-3">
+
+              <section className="overflow-hidden rounded-xl border border-[#D0D0D0] bg-white">
+
+                <div className="border-b border-[#D0D0D0] bg-[#F1F1F1] px-5 py-4">
+                  <h2 className="text-[19px] font-semibold">
+                    Navigation Log
+                  </h2>
+
+                  <p className="mt-1 text-[12px] text-gray-500">
+                    EUR4425 · KEWR → KDCA · A359
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[850px] text-left text-[12px]">
+
+                    <thead className="bg-[#E9E9E9] text-[11px] font-semibold uppercase text-gray-600">
+                      <tr>
+                        <th className="px-4 py-3">Waypoint</th>
+                        <th className="px-4 py-3">FL</th>
+                        <th className="px-4 py-3">Wind</th>
+                        <th className="px-4 py-3">Dist</th>
+                        <th className="px-4 py-3">Time</th>
+                        <th className="px-4 py-3">Fuel</th>
+                        <th className="px-4 py-3">ETA</th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="divide-y divide-gray-200">
+
+                      <tr className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-semibold">KEWR</td>
+                        <td className="px-4 py-3">—</td>
+                        <td className="px-4 py-3">210/04</td>
+                        <td className="px-4 py-3">0</td>
+                        <td className="px-4 py-3">00:00</td>
+                        <td className="px-4 py-3">7412</td>
+                        <td className="px-4 py-3">10:59</td>
+                      </tr>
+
+                      <tr className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-semibold">BIGGY</td>
+                        <td className="px-4 py-3">120</td>
+                        <td className="px-4 py-3">220/12</td>
+                        <td className="px-4 py-3">18</td>
+                        <td className="px-4 py-3">00:05</td>
+                        <td className="px-4 py-3">6890</td>
+                        <td className="px-4 py-3">11:04</td>
+                      </tr>
+
+                      <tr className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-semibold">COPES</td>
+                        <td className="px-4 py-3">250</td>
+                        <td className="px-4 py-3">230/15</td>
+                        <td className="px-4 py-3">41</td>
+                        <td className="px-4 py-3">00:12</td>
+                        <td className="px-4 py-3">6102</td>
+                        <td className="px-4 py-3">11:11</td>
+                      </tr>
+
+                      <tr className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-semibold">MXE</td>
+                        <td className="px-4 py-3">350</td>
+                        <td className="px-4 py-3">237/20</td>
+                        <td className="px-4 py-3">86</td>
+                        <td className="px-4 py-3">00:28</td>
+                        <td className="px-4 py-3">4820</td>
+                        <td className="px-4 py-3">11:27</td>
+                      </tr>
+
+                      <tr className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-semibold">BAL</td>
+                        <td className="px-4 py-3">350</td>
+                        <td className="px-4 py-3">235/17</td>
+                        <td className="px-4 py-3">142</td>
+                        <td className="px-4 py-3">00:39</td>
+                        <td className="px-4 py-3">4105</td>
+                        <td className="px-4 py-3">11:38</td>
+                      </tr>
+
+                      <tr className="bg-[#F5F5F5] font-semibold">
+                        <td className="px-4 py-3">KDCA</td>
+                        <td className="px-4 py-3">—</td>
+                        <td className="px-4 py-3">—</td>
+                        <td className="px-4 py-3">183</td>
+                        <td className="px-4 py-3">00:35</td>
+                        <td className="px-4 py-3">3515</td>
+                        <td className="px-4 py-3">12:17</td>
+                      </tr>
+
+                    </tbody>
+
+                  </table>
+                </div>
+
+              </section>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+
+                <section className="rounded-xl border border-[#D0D0D0] bg-white p-4">
+                  <div className="mb-3 text-[14px] font-semibold">
+                    Route
+                  </div>
+
+                  <div className="text-[13px] leading-[1.7] text-gray-700">
+                    KEWR → BIGGY → COPES → MXE → BAL → KDCA
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-[#D0D0D0] bg-white p-4">
+                  <div className="mb-3 text-[14px] font-semibold">
+                    Trip
+                  </div>
+
+                  <div className="space-y-2">
+                    <WeatherRow label="Distance" value="183 NM" />
+                    <WeatherRow label="Air Distance" value="192 NM" />
+                    <WeatherRow label="Time" value="00:35" />
+                  </div>
+                </section>
+
+                <section className="rounded-xl border border-[#D0D0D0] bg-white p-4">
+                  <div className="mb-3 text-[14px] font-semibold">
+                    Fuel
+                  </div>
+
+                  <div className="space-y-2">
+                    <WeatherRow label="Trip Fuel" value="3515 kg" />
+                    <WeatherRow label="Minimum Block" value="8012 kg" />
+                    <WeatherRow label="Takeoff Fuel" value="7412 kg" />
+                  </div>
+                </section>
+
+              </div>
+
+            </div>
+          </div>
+        )}
 
 
       {/* =========================================================
