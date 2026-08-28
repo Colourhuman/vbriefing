@@ -34,6 +34,11 @@ const SIMBRIEF_STORAGE_KEY = "virtual-lido-simbrief-user";
 const SIMBRIEF_OFP_STORAGE_KEY = "virtual-lido-simbrief-ofp-v3";
 const SIMBRIEF_FUEL_ORDER_KEY = "virtual-lido-fuel-ordered-v3";
 
+// Publicly available simplified FIR/UIR GeoJSON used only for visual map boundaries.
+// We render UIRs only; no labels are drawn. The dataset notes that its world file is
+// focused on Europe and may not reflect the latest operational airspace changes.
+const UIR_GEOJSON_URL = "https://raw.githubusercontent.com/jaluebbe/FlightMapEuropeSimple/master/static/flightmap_europe_fir_uir.json";
+
 function safeStorageGet(key) {
   try {
     return localStorage.getItem(key) || "";
@@ -383,81 +388,84 @@ function normalizeSigwxCharts(ofp) {
 }
 
 function normalizeVerticalProfileCharts(ofp) {
-  const result = [];
+  const candidates = [];
   const seen = new Set();
+  const images = ofp?.images || ofp?.image || {};
+  const directory = firstValue(images?.directory, ofp?.images?.directory, "https://www.simbrief.com/ofp/uads/");
 
-  const normalizeUrl = (value, directory = "") => {
+  const normalizeUrl = (value, directoryOverride = directory) => {
     if (!value) return "";
     let url = String(value).trim().replace(/&amp;/g, "&");
     if (!url) return "";
     if (/^http:\/\//i.test(url)) url = `https://${url.slice(7)}`;
     if (!/^https?:\/\//i.test(url)) {
-      const base = String(directory || "https://www.simbrief.com/ofp/uads/").replace(/\/$/, "");
+      const base = String(directoryOverride || "https://www.simbrief.com/ofp/uads/").replace(/\/$/, "");
       url = `${base}/${url.replace(/^\/+/, "")}`;
     }
     return url;
   };
 
-  const images = ofp?.images || ofp?.image || {};
-  const directory = firstValue(images?.directory, ofp?.images?.directory, "https://www.simbrief.com/ofp/uads/");
-
+  const canonical = (url) => String(url).split("#")[0].split("?")[0].toLowerCase();
   const add = (item, directoryOverride = directory) => {
     if (!item) return;
-    const name = typeof item === "string"
-      ? item
-      : firstValue(item.name, item.title, item.label, item.description, item.caption, "");
-    const link = typeof item === "string"
-      ? item
-      : firstValue(item.link, item.url, item.href, item.src, item.file, item.filename, "");
+    const name = typeof item === "string" ? item : firstValue(item.name, item.title, item.label, item.description, item.caption, "");
+    const link = typeof item === "string" ? item : firstValue(item.link, item.url, item.href, item.src, item.file, item.filename, "");
     const combined = `${name} ${link}`;
-    if (!/(vertical\s*profile|vertical[_-]?profile|v[_-]?profile|profile[_-]?vertical|elevation\s*profile|flight\s*profile)/i.test(combined)) return;
+    if (!/(vertical\s*profile|vertical[_-]?profile|v[_-]?profile|profile[_-]?vertical|elevation\s*profile|flight[_-]?profile)/i.test(combined)) return;
     const url = normalizeUrl(link, directoryOverride);
-    if (!url || seen.has(url)) return;
-    seen.add(url);
-    result.push({ name: name || "Vertical Profile", url });
+    if (!url) return;
+    const key = canonical(url);
+    if (seen.has(key)) return;
+    seen.add(key);
+    const score = /(vertical\s*profile|vertical[_-]?profile)/i.test(combined) ? 10
+      : /flight[_-]?profile/i.test(combined) ? 8
+      : /elevation\s*profile/i.test(combined) ? 7
+      : 5;
+    candidates.push({ name: name || "Vertical Profile", url, score });
   };
 
-  [images?.map, images?.maps, images?.image, images?.images, images?.vertical_profile, images?.verticalProfile, images?.vprofile, images?.v_profile, images?.profile, images?.flight_profile, images?.elevation_profile]
-    .flatMap(toArray)
-    .forEach((item) => add(item));
+  [
+    images?.vertical_profile,
+    images?.verticalProfile,
+    images?.vprofile,
+    images?.v_profile,
+    images?.profile,
+    images?.flight_profile,
+    images?.elevation_profile,
+  ].flatMap(toArray).forEach((item) => add(item));
+
+  // Inspect image/map collections, but do not turn every generic profile-related
+  // object into a separate chart. The OFP should expose one vertical profile map.
+  [images?.map, images?.maps, images?.image, images?.images].flatMap(toArray).forEach((item) => add(item));
 
   const walkKeys = (value) => {
-    if (!value || typeof value !== "object") return;
+    if (!value || typeof value !== "object" || candidates.length > 8) return;
     Object.entries(value).forEach(([key, child]) => {
-      if (/vertical|profile|elevation/i.test(key)) {
-        toArray(child).forEach((item) => {
-          if (typeof item === "string") add({ name: "Vertical Profile", link: item });
-          else add(item);
-        });
+      if (/vertical[_\s-]*profile|flight[_\s-]*profile|elevation[_\s-]*profile/i.test(key)) {
+        toArray(child).forEach((item) => add(typeof item === "string" ? { name: "Vertical Profile", link: item } : item));
       }
       if (child && typeof child === "object") walkKeys(child);
     });
   };
   walkKeys(images);
-  walkKeys(ofp);
-
-  recursiveObjectValues(images).forEach((item) => add(item));
-  recursiveObjectValues(ofp).forEach((item) => {
-    if (item && typeof item === "object") add(item);
-  });
 
   try {
     const serialized = JSON.stringify(ofp);
     const filenameRegex = /([A-Za-z0-9_.-]*(?:vertical[_-]?profile|v[_-]?profile|profile[_-]?vertical|elevation[_-]?profile|flight[_-]?profile)[A-Za-z0-9_.-]*\.(?:gif|png|jpe?g|webp))/gi;
     let match;
     while ((match = filenameRegex.exec(serialized))) add({ name: "Vertical Profile", link: match[1] });
-
     const absoluteRegex = /(https?:\/\/[^"'\s<>]*(?:vertical[_-]?profile|v[_-]?profile|profile[_-]?vertical|elevation[_-]?profile|flight[_-]?profile)[^"'\s<>]*)/gi;
     while ((match = absoluteRegex.exec(serialized))) add({ name: "Vertical Profile", link: match[1] });
-
     const html = String(ofp?.text?.plan_html || ofp?.text?.html || "");
     const htmlRegex = /(?:src|href)=["']([^"']*(?:vertical\s*profile|vertical[_-]?profile|v[_-]?profile|profile[_-]?vertical|elevation[_-]?profile|flight[_-]?profile)[^"']*)["']/gi;
     while ((match = htmlRegex.exec(html))) add({ name: "Vertical Profile", link: match[1] });
   } catch {
-    // Keep structured results when string parsing is unavailable.
+    // Keep structured results if string parsing is unavailable.
   }
 
-  return result;
+  // SimBrief provides a single vertical profile map for the briefing. If the
+  // OFP exposes the same asset through several image nodes, show it only once.
+  return candidates.sort((a, b) => b.score - a.score)[0] ? [candidates.sort((a, b) => b.score - a.score)[0]] : [];
 }
 
 function rootOrNested(ofp, nested, keys) {
@@ -754,6 +762,7 @@ const NIGHT_MODE_CSS = `
 [data-night="true"] [class*="bg-[#F0F1F2]"] { background:#2b3036 !important; }
 [data-night="true"] img[src*="tile.openstreetmap.org"] { filter: grayscale(82%) saturate(35%) contrast(92%) brightness(46%) !important; }
 [data-night="true"] .lido-grid-lines line { stroke:#AEB5BC !important; opacity:.30 !important; }
+[data-night="true"] .lido-uir-boundary { stroke:#6FC96A !important; opacity:.72 !important; }
 [data-night="true"] [class*="bg-[#F4F3ED]"],
 [data-night="true"] [class*="bg-[#E8E8E3]"] { background:rgba(25,29,34,.42) !important; }
 [data-night="true"] pre { color:#e4e7eb !important; }
@@ -1693,6 +1702,28 @@ function DynamicMap({ flight, navFixes, airports, compact = false, showLabels = 
 function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onToggleLabels }) {
   const containerRef = useRef(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const [uirGeoJson, setUirGeoJson] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    try {
+      const cached = safeStorageGet("virtual-lido-uir-geojson-v1");
+      if (cached) setUirGeoJson(JSON.parse(cached));
+    } catch {
+      // Ignore invalid cache and fetch fresh data below.
+    }
+    fetch(UIR_GEOJSON_URL)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("UIR data unavailable")))
+      .then((data) => {
+        if (cancelled || !data?.features) return;
+        setUirGeoJson(data);
+        safeStorageSet("virtual-lido-uir-geojson-v1", JSON.stringify(data));
+      })
+      .catch(() => {
+        // Cached UIR data remains usable when the network is unavailable.
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return undefined;
@@ -1748,17 +1779,41 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
     .map((p, index) => `${index === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
     .join(" ");
 
-  const firTransitions = [];
-  let previousFir = "";
-  (navFixes || []).forEach((fix) => {
-    const fir = String(firstValue(fix.fir, fix.fir_name, fix.fir_code, fix.fir_ident, fix.fir_entry, fix.fir_exit, fix.firname, fix.airspace, fix.airspace_name, "")).trim();
-    if (!fir) return;
-    if (fir !== previousFir) {
-      const point = project(fix.lat, fix.lon);
-      if (point) firTransitions.push({ ...point, fir });
-      previousFir = fir;
-    }
-  });
+  const uirPaths = useMemo(() => {
+    if (!view || !uirGeoJson?.features?.length) return [];
+    const features = uirGeoJson.features.filter((feature) => {
+      const props = feature?.properties || {};
+      const airspace = String(firstValue(props.AV_AIRSPAC, props.TYPE, props.type, props.type_code, props.LOCAL_TYPE, "")).toUpperCase();
+      const name = String(firstValue(props.AV_NAME, props.name, "")).toUpperCase();
+      return airspace.endsWith("UIR") || airspace.includes("UIR") || /\bUIR\b/.test(name);
+    });
+    const paths = [];
+    const addRing = (ring, featureIndex, ringIndex) => {
+      if (!Array.isArray(ring) || ring.length < 2) return;
+      const commands = [];
+      ring.forEach((coord, index) => {
+        const lon = Number(coord?.[0]);
+        const lat = Number(coord?.[1]);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        const point = project(lat, lon);
+        if (!point) return;
+        commands.push(`${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`);
+      });
+      if (commands.length > 1) paths.push({ d: `${commands.join(" ")} Z`, key: `uir-${featureIndex}-${ringIndex}` });
+    };
+    features.forEach((feature, featureIndex) => {
+      const geometry = feature?.geometry;
+      if (!geometry) return;
+      if (geometry.type === "Polygon") {
+        geometry.coordinates?.forEach((ring, ringIndex) => addRing(ring, featureIndex, ringIndex));
+      } else if (geometry.type === "MultiPolygon") {
+        geometry.coordinates?.forEach((polygon, polygonIndex) => {
+          polygon?.forEach((ring, ringIndex) => addRing(ring, featureIndex, `${polygonIndex}-${ringIndex}`));
+        });
+      }
+    });
+    return paths;
+  }, [uirGeoJson, view, size.width, size.height]);
 
   const grid = useMemo(() => {
     if (!view) return [];
@@ -1809,11 +1864,18 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
             ))}
           </g>
           {path && <path d={path} fill="none" stroke="#050505" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />}
-          {firTransitions.map((transition, index) => (
-            <g key={`fir-${index}`} transform={`translate(${transition.x} ${transition.y})`}>
-              <line x1="0" y1="-16" x2="0" y2="16" stroke="#58A84F" strokeWidth="2" strokeDasharray="4 3" opacity="0.9" />
-              <circle r="2.5" fill="#58A84F" stroke="#FFFFFF" strokeWidth="1" />
-            </g>
+          {uirPaths.map((boundary) => (
+            <path
+              key={boundary.key}
+              d={boundary.d}
+              className="lido-uir-boundary"
+              fill="none"
+              stroke="#4FA84B"
+              strokeWidth="1.15"
+              strokeDasharray="7 5"
+              opacity="0.82"
+              vectorEffect="non-scaling-stroke"
+            />
           ))}
         </svg>
       )}
