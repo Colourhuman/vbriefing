@@ -7,7 +7,7 @@ import {
   List,
   Languages,
   Upload,
-  Bell,
+  Moon as MoonIcon,
   Grid3X3,
   Phone,
   MessageSquare,
@@ -560,6 +560,45 @@ function uniqueByCode(list) {
   });
 }
 
+
+const NIGHT_MODE_CSS = `
+[data-night="true"] { background:#171a1e !important; color:#e8eaed !important; }
+[data-night="true"] header,
+[data-night="true"] nav { background:#20242a !important; border-color:#3a3f46 !important; }
+[data-night="true"] main,
+[data-night="true"] .night-mode { background:#171a1e !important; }
+[data-night="true"] [class*="bg-[#E5E7EB]"],
+[data-night="true"] [class*="bg-[#F1F1F1]"],
+[data-night="true"] [class*="bg-[#F4F4F4]"],
+[data-night="true"] [class*="bg-[#EEEEEE]"],
+[data-night="true"] [class*="bg-[#E9E9E9]"],
+[data-night="true"] [class*="bg-white"] { background:#24282e !important; }
+[data-night="true"] [class*="bg-[#D1D3D4]"],
+[data-night="true"] [class*="bg-[#DDE0E3]"],
+[data-night="true"] [class*="bg-[#D5D7D9]"],
+[data-night="true"] [class*="bg-[#E8E9EA]"] { background:#2b3036 !important; }
+[data-night="true"] [class*="text-[#25282C]"],
+[data-night="true"] [class*="text-[#303942]"],
+[data-night="true"] [class*="text-[#333B44]"],
+[data-night="true"] [class*="text-gray-700"],
+[data-night="true"] [class*="text-gray-600"],
+[data-night="true"] [class*="text-gray-500"] { color:#d5d9de !important; }
+[data-night="true"] [class*="border-gray-200"],
+[data-night="true"] [class*="border-gray-300"],
+[data-night="true"] [class*="border-[#D0D0D0]"],
+[data-night="true"] [class*="border-[#D5D5D5]"],
+[data-night="true"] [class*="border-[#C4C6C8]"] { border-color:#3b4149 !important; }
+[data-night="true"] input { background:#171a1e !important; color:#f0f2f4 !important; border-color:#4a515a !important; }
+[data-night="true"] [class*="bg-[#0B1E48]"] { background:#10254d !important; }
+`;
+
+if (typeof document !== "undefined" && !document.getElementById("virtual-lido-night-mode")) {
+  const style = document.createElement("style");
+  style.id = "virtual-lido-night-mode";
+  style.textContent = NIGHT_MODE_CSS;
+  document.head.appendChild(style);
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [dashboardPage, setDashboardPage] = useState(0);
@@ -588,6 +627,7 @@ export default function App() {
   const [clearanceData, setClearanceData] = useState({ departure: "", stand: "", squawk: "", initialClimb: "", atis: "" });
   const [copiedClearance, setCopiedClearance] = useState(false);
   const [showRouteLabels, setShowRouteLabels] = useState(true);
+  const [nightMode, setNightMode] = useState(false);
   const touchStartX = useRef(null);
 
   const flight = simbriefData || fallbackFlight();
@@ -620,9 +660,9 @@ export default function App() {
 
   const mapAirports = useMemo(
     () => [
-      { ...flight.origin, kind: "origin", color: "green", label: importedOrigin },
-      { ...flight.destination, kind: "destination", color: "orange", label: importedDestination },
-      ...alternates.map((apt) => ({ ...apt, kind: "alternate", color: "purple", label: airportCode(apt) })),
+      { ...flight.origin, kind: "origin", color: "green", label: airportIata(flight.origin, importedOrigin) },
+      { ...flight.destination, kind: "destination", color: "orange", label: airportIata(flight.destination, importedDestination) },
+      ...alternates.map((apt) => ({ ...apt, kind: "alternate", color: "purple", label: airportIata(apt, airportCode(apt)) })),
     ].filter((apt) => Number.isFinite(apt.lat) && Number.isFinite(apt.lon)),
     [flight.origin, flight.destination, alternates, importedOrigin, importedDestination]
   );
@@ -820,29 +860,29 @@ export default function App() {
   const currentNav = navigationItems.find((item) => item.id === activeTab) || navigationItems[0];
 
   return (
-    <div className="flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-[#E5E7EB] text-[#25282C]">
-      <header className="relative z-50 grid h-[58px] min-h-[58px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-[#C4C6C8] bg-[#D1D3D4]">
-        <div className="flex h-full min-w-0 items-center overflow-hidden">
+    <div data-night={nightMode ? "true" : "false"} className={`flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-[#E5E7EB] text-[#25282C] ${nightMode ? "night-mode" : ""}`}>
+      <header className="relative z-50 flex h-[58px] min-h-[58px] items-center border-b border-[#C4C6C8] bg-[#D1D3D4]">
+        <div className="flex h-full min-w-0 w-1/2 flex-none items-center overflow-hidden">
           <button className="flex h-full w-[50px] shrink-0 items-center justify-center border-r border-[#C4C6C8] text-gray-700 hover:bg-black/5">
             <X size={23} />
           </button>
-          <div className="flex h-full items-center whitespace-nowrap text-[12px] font-semibold">
+          <div className="flex h-full min-w-0 items-center whitespace-nowrap text-[12px] font-semibold">
             <HeaderCell>{effectiveFlight}</HeaderCell>
             <HeaderCell>{flight.registration || "-"}</HeaderCell>
             <HeaderCell>{effectiveAircraft}</HeaderCell>
-            <HeaderCell>{importedOrigin} ({formatTime(flight.estimatedOut || flight.scheduledOut)}) - {importedDestination} ({formatTime(flight.estimatedIn || flight.scheduledIn)})</HeaderCell>
-            <div className="hidden h-full items-center px-3 md:flex"><span>OFP 1/0/1</span></div>
-            <div className="px-2"><span className="rounded-[3px] bg-[#65C529] px-2 py-[3px] text-[10px] font-bold text-[#173D0B]">FINAL</span></div>
+            <HeaderCell className="hidden xl:flex">{importedOrigin} ({formatTime(flight.estimatedOut || flight.scheduledOut)}) - {importedDestination} ({formatTime(flight.estimatedIn || flight.scheduledIn)})</HeaderCell>
+            <div className="hidden h-full items-center px-3 xl:flex"><span>OFP 1/0/1</span></div>
+            <div className="shrink-0 px-2"><span className="rounded-[3px] bg-[#65C529] px-2 py-[3px] text-[10px] font-bold text-[#173D0B]">FINAL</span></div>
           </div>
         </div>
-        <div className="z-10 min-w-0 whitespace-nowrap bg-[#D1D3D4] px-3 text-center text-[18px] font-semibold">{currentNav.label}</div>
-        <div className="ml-auto flex h-full min-w-0 shrink-0 items-center justify-end">
+        <div className="pointer-events-none absolute left-1/2 top-0 flex h-full -translate-x-1/2 items-center whitespace-nowrap bg-[#D1D3D4] px-3 text-[18px] font-semibold">{currentNav.label}</div>
+        <div className="ml-auto flex h-full shrink-0 items-center justify-end">
           <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5"><Languages size={22} strokeWidth={1.8} /></button>
           <button onClick={() => setShowSimBriefModal(true)} title="SimBrief" className="relative flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5">
             <Upload size={22} strokeWidth={1.8} />
             {simbriefData && <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#65C529]" />}
           </button>
-          <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5"><Bell size={22} strokeWidth={1.8} /></button>
+          <button onClick={() => setNightMode((v) => !v)} title={nightMode ? "Day mode" : "Night mode"} className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5"><MoonIcon size={22} strokeWidth={1.8} /></button>
           <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5"><Grid3X3 size={22} strokeWidth={2} /></button>
         </div>
       </header>
@@ -1370,8 +1410,8 @@ export default function App() {
   );
 }
 
-function HeaderCell({ children }) {
-  return <div className="flex h-full min-w-0 items-center border-r border-[#C4C6C8] px-3"><span className="max-w-[28vw] truncate">{children}</span></div>;
+function HeaderCell({ children, className = "" }) {
+  return <div className={`flex h-full min-w-0 items-center border-r border-[#C4C6C8] px-3 ${className}`}><span className="max-w-[28vw] truncate">{children}</span></div>;
 }
 
 function FlightInfoCard({ flight, origin, destination, effectiveFlight, aircraft }) {
@@ -1478,28 +1518,7 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
       ))}
 
       <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/25" />
-      <div
-        className="pointer-events-none absolute inset-0 z-[2]"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(84,96,91,.18) 1px, transparent 1px), linear-gradient(90deg, rgba(84,96,91,.18) 1px, transparent 1px)",
-          backgroundSize: compact ? "52px 52px" : "64px 64px",
-          backgroundPosition: "center center",
-        }}
-      />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.08),rgba(235,235,225,.14))]" />
-
-      {view && (
-        <svg className="pointer-events-none absolute inset-0 z-[3] h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
-          <g stroke="#6F8177" strokeWidth="0.65" opacity="0.36">
-            {grid.map((line, index) => <line key={`${line.type}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} />)}
-          </g>
-          <g fill="#627168" fontSize="9" fontFamily="Arial, sans-serif" opacity="0.88">
-            {grid.filter((l) => l.type === "lat").map((line, index) => <text key={`lat-${index}`} x="5" y={Math.max(11, Math.min(size.height - 5, line.a.y - 2))}>{latLabel(line.value)}</text>)}
-            {grid.filter((l) => l.type === "lon").map((line, index) => <text key={`lon-${index}`} x={Math.max(4, Math.min(size.width - 42, line.a.x + 3))} y="12">{lonLabel(line.value)}</text>)}
-          </g>
-        </svg>
-      )}
 
       {view && path && (
         <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
@@ -1553,6 +1572,18 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
       <div className="absolute bottom-1 right-1 rounded bg-white/82 px-1.5 py-0.5 text-[8px] text-gray-500">© OpenStreetMap contributors</div>
     </div>
   );
+}
+
+function airportIata(airport, fallback = "") {
+  const direct = firstValue(airport?.iata, airport?.iata_code);
+  if (direct) return String(direct).toUpperCase();
+  const known = {
+    EDDL: "DUS", EDDF: "FRA", KEWR: "EWR", KDCA: "DCA", KBWI: "BWI",
+    EDDK: "CGN", EDDH: "HAM", EDDM: "MUC", EDDB: "BER", EGLL: "LHR",
+    LFPG: "CDG", KJFK: "JFK", KLAX: "LAX", KSFO: "SFO", KORD: "ORD"
+  };
+  const icao = String(firstValue(airport?.icao, airport?.icao_code, fallback)).toUpperCase();
+  return known[icao] || "---";
 }
 
 function fitMapView(points, width, height) {
