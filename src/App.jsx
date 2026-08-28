@@ -1,15 +1,16 @@
-import React, { useState } from "react";
-import {
-  LayoutGrid,
-  FileText,
-  Map,
-  GitFork,
-  List,
-  Languages,
-  Upload,
-  Bell,
-  Grid3X3,
-} from "lucide-react";
+import React, { useState } from 'react';
+import { 
+  Plane, 
+  FileText, 
+  Map, 
+  CloudSun, 
+  CheckSquare, 
+  Sliders, 
+  ChevronRight, 
+  AlertCircle,
+  Clock,
+  Navigation
+} from 'lucide-react';
 
 const navigationItems = [
   {
