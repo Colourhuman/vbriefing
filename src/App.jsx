@@ -603,6 +603,7 @@ export default function App() {
   const importedOrigin = airportCode(flight.origin) || "----";
   const importedDestination = airportCode(flight.destination) || "----";
   const effectiveFlight = firstValue(flight.flightNumber, flight.callsign, "-");
+  const effectiveRoute = firstValue(flight.route, "");
   const effectiveAircraft = firstValue(flight.aircraftIcao, flight.aircraftName, "-");
   const originIata = firstValue(flight.origin?.iata, importedOrigin);
   const destinationIata = firstValue(flight.destination?.iata, importedDestination);
