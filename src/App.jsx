@@ -16,6 +16,9 @@ import {
   ChevronDown,
   ChevronRight,
   X,
+  CheckCircle2,
+  Loader2,
+  Copy,
 } from "lucide-react";
 
 const navigationItems = [
@@ -37,18 +40,364 @@ const airportsList = [
   { icao: "KPHL/PHL", name: "PHILADELPHIA INTL", role: "Arrival Alternate", type: "main" },
 ];
 
+
+const SIMBRIEF_STORAGE_KEY = "virtual-lido-simbrief-user";
+const SIMBRIEF_OFP_STORAGE_KEY = "virtual-lido-simbrief-ofp";
+
+function safeStorageGet(key) {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage errors (private mode / blocked storage).
+  }
+}
+
+function getPath(object, path, fallback = "") {
+  const parts = path.split(".");
+  let value = object;
+  for (const part of parts) {
+    if (value == null) return fallback;
+    value = value[part];
+  }
+  return value == null || value === "" ? fallback : value;
+}
+
+function firstValue(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== "") ?? "";
+}
+
+function toNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function toArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value == null || value === "") return [];
+  return [value];
+}
+
+function formatNumber(value, digits = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  }).format(number);
+}
+
+function formatWeight(value, units = "kgs") {
+  if (value === undefined || value === null || value === "") return "-";
+  const unit = String(units).toLowerCase().includes("lbs") ? "lb" : "kg";
+  return `${formatNumber(value)} ${unit}`;
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(toNumber(seconds)));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function formatUtcTime(epochSeconds) {
+  const timestamp = toNumber(epochSeconds, NaN);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
+  const date = new Date(timestamp * 1000);
+  return date.toISOString().slice(11, 16);
+}
+
+function airportFromOFP(value = {}) {
+  return {
+    icao: firstValue(value.icao_code, value.icao, value.ident),
+    iata: firstValue(value.iata_code, value.iata),
+    name: firstValue(value.name, "UNKNOWN AIRPORT"),
+    role: "",
+    runway: firstValue(value.plan_rwy, value.runway),
+  };
+}
+
+function normalizeNotams(rawNotams) {
+  const items = [];
+  const roots = [rawNotams, getPath(rawNotams, "notam", []), getPath(rawNotams, "item", [])];
+  for (const root of roots) {
+    for (const item of toArray(root)) {
+      if (typeof item === "string" && item.trim()) items.push(item.trim());
+      else if (item && typeof item === "object") {
+        const text = firstValue(item.text, item.body, item.notam, item.raw, item.message);
+        if (text) items.push(String(text).trim());
+      }
+    }
+  }
+  return [...new Set(items)];
+}
+
+function normalizeSimBriefOFP(ofp) {
+  const origin = airportFromOFP(ofp?.origin || {});
+  const destination = airportFromOFP(ofp?.destination || {});
+  const alternate = airportFromOFP(ofp?.alternate || ofp?.altn || {});
+  const aircraft = ofp?.aircraft || {};
+  const general = ofp?.general || {};
+  const atc = ofp?.atc || {};
+  const fuel = ofp?.fuel || {};
+  const weights = ofp?.weights || {};
+  const times = ofp?.times || {};
+  const weather = ofp?.weather || {};
+  const params = ofp?.params || {};
+  const navlog = toArray(getPath(ofp, "navlog.fix", []));
+
+  const fuelUnits = firstValue(params.units, "kgs");
+  const callsign = firstValue(atc.callsign, `${firstValue(general.icao_airline, "")}${firstValue(general.flight_number, "")}`);
+  const route = firstValue(atc.route, general.route, getPath(ofp, "general.route"));
+  const cruiseAltitude = firstValue(general.initial_altitude, getPath(atc, "initial_alt"));
+  const flightTime = firstValue(times.est_time_enroute, times.sched_time_enroute);
+
+  return {
+    raw: ofp,
+    params,
+    general,
+    origin,
+    destination,
+    alternate,
+    aircraft,
+    atc,
+    fuel,
+    weights,
+    times,
+    weather,
+    navlog,
+    notams: normalizeNotams(ofp?.notams),
+    flightNumber: firstValue(general.flight_number, atc.flight_number),
+    airline: firstValue(general.icao_airline, ""),
+    callsign,
+    aircraftIcao: firstValue(aircraft.icaocode, aircraft.icao_code),
+    aircraftName: firstValue(aircraft.name, aircraftIcaoFallback(aircraft)),
+    registration: firstValue(aircraft.reg, aircraft.registration),
+    route,
+    cruiseAltitude,
+    costIndex: firstValue(general.costindex, general.cost_index, general.cruise_profile),
+    fuelUnits,
+    tripFuel: firstValue(fuel.enroute_burn, getPath(ofp, "fuel.trip", "")),
+    alternateFuel: firstValue(fuel.alternate_burn, fuel.altn_burn),
+    reserveFuel: firstValue(fuel.reserve),
+    taxiFuel: firstValue(fuel.taxi),
+    contingencyFuel: firstValue(fuel.contingency),
+    etopsFuel: firstValue(fuel.etops),
+    extraFuel: firstValue(fuel.extra),
+    minTakeoffFuel: firstValue(fuel.min_takeoff),
+    takeoffFuel: firstValue(fuel.plan_takeoff, fuel.takeoff),
+    rampFuel: firstValue(fuel.plan_ramp, fuel.ramp),
+    landingFuel: firstValue(fuel.plan_landing, fuel.landing),
+    zfw: firstValue(weights.est_zfw),
+    tow: firstValue(weights.est_tow),
+    ldw: firstValue(weights.est_ldw),
+    maxZfw: firstValue(weights.max_zfw),
+    maxTow: firstValue(weights.max_tow, weights.max_tow_struct),
+    maxLdw: firstValue(weights.max_ldw),
+    payload: firstValue(weights.payload),
+    pax: firstValue(weights.pax_count),
+    oew: firstValue(weights.oew),
+    scheduledOut: firstValue(times.sched_out, times.est_out),
+    scheduledOff: firstValue(times.sched_off, times.est_off),
+    scheduledOn: firstValue(times.sched_on, times.est_on),
+    scheduledIn: firstValue(times.sched_in, times.est_in),
+    tripTime: formatDuration(flightTime),
+    originMetar: firstValue(weather.orig_metar),
+    originTaf: firstValue(weather.orig_taf),
+    destinationMetar: firstValue(weather.dest_metar),
+    destinationTaf: firstValue(weather.dest_taf),
+    alternateMetar: firstValue(weather.altn_metar),
+    alternateTaf: firstValue(weather.altn_taf),
+    pdcText: firstValue(atc.flightplan_text),
+  };
+}
+
+function aircraftIcaoFallback(aircraft) {
+  return firstValue(aircraft.iatacode, "-");
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("map");
   const [dashboardPage, setDashboardPage] = useState(0);
   const [weatherAirport, setWeatherAirport] = useState("KEWR");
   const [selectedAirport, setSelectedAirport] = useState(airportsList[0]);
   const [subTab, setSubTab] = useState("RAIM"); // NOTAM, RAIM
+  const [simbriefUser, setSimbriefUser] = useState(() => safeStorageGet(SIMBRIEF_STORAGE_KEY));
+  const [simbriefData, setSimbriefData] = useState(() => {
+    const stored = safeStorageGet(SIMBRIEF_OFP_STORAGE_KEY);
+    if (!stored) return null;
+    try {
+      return JSON.parse(stored);
+    } catch {
+      return null;
+    }
+  });
+  const [showSimBriefModal, setShowSimBriefModal] = useState(false);
+  const [simbriefInput, setSimbriefInput] = useState(() => safeStorageGet(SIMBRIEF_STORAGE_KEY));
+  const [simbriefLoading, setSimbriefLoading] = useState(false);
+  const [simbriefError, setSimbriefError] = useState("");
+  const [simbriefImportedAt, setSimbriefImportedAt] = useState(() => {
+    const stored = safeStorageGet(SIMBRIEF_OFP_STORAGE_KEY);
+    try {
+      return stored ? JSON.parse(stored)?._importedAt || "" : "";
+    } catch {
+      return "";
+    }
+  });
+  const [copiedClearance, setCopiedClearance] = useState(false);
 
   const touchStartX = useRef(null);
 
   const currentNav =
     navigationItems.find((item) => item.id === activeTab) ||
     navigationItems[0];
+
+  const flight = simbriefData || {
+    origin: { icao: "KEWR", iata: "EWR", name: "NEWARK/LIBERTY INTL", runway: "22R" },
+    destination: { icao: "KDCA", iata: "DCA", name: "WASHINGTON REAGAN", runway: "01" },
+    alternate: { icao: "KBWI", iata: "BWI", name: "BALTIMORE/WASHINGTON" },
+    flightNumber: "EUR4425",
+    airline: "EUR",
+    callsign: "EUR4425",
+    aircraftIcao: "A359",
+    aircraftName: "Airbus A350-900",
+    registration: "{flight.registration || "-"}",
+    route: "BIGGY4 BIGGY COPES MXE BAL",
+    cruiseAltitude: "35000",
+    costIndex: "30",
+    fuelUnits: "kgs",
+    tripFuel: "3515",
+    alternateFuel: "1182",
+    reserveFuel: "2327",
+    taxiFuel: "600",
+    minTakeoffFuel: "8012",
+    takeoffFuel: "7412",
+    rampFuel: "8012",
+    landingFuel: "3897",
+    zfw: "180000",
+    tow: "187412",
+    ldw: "183897",
+    maxZfw: "194000",
+    maxTow: "272000",
+    maxLdw: "207000",
+    payload: "40000",
+    pax: "0",
+    oew: "140000",
+    scheduledOut: "",
+    scheduledIn: "",
+    tripTime: "01:18",
+    originMetar: "",
+    originTaf: "",
+    destinationMetar: "",
+    destinationTaf: "",
+    alternateMetar: "",
+    alternateTaf: "",
+    pdcText: "",
+    navlog: [],
+    notams: [],
+  };
+
+  const importedOrigin = flight.origin?.icao || "KEWR";
+  const importedDestination = flight.destination?.icao || "KDCA";
+  const importedAlternate = flight.alternate?.icao || "KBWI";
+  const headerDepartureTime = formatUtcTime(flight.scheduledOut) === "-" ? "--:--" : formatUtcTime(flight.scheduledOut);
+  const headerArrivalTime = formatUtcTime(flight.scheduledIn) === "-" ? "--:--" : formatUtcTime(flight.scheduledIn);
+  const effectiveRoute = flight.route || "No route in OFP";
+  const effectiveAircraft = flight.aircraftIcao || flight.aircraftName || "-";
+  const effectiveFlight = flight.flightNumber || flight.callsign || "-";
+
+  const weatherSelection = {
+    KEWR: { code: importedOrigin, airport: flight.origin, metar: flight.originMetar, taf: flight.originTaf },
+    KDCA: { code: importedDestination, airport: flight.destination, metar: flight.destinationMetar, taf: flight.destinationTaf },
+    ALTN: { code: importedAlternate, airport: flight.alternate, metar: flight.alternateMetar, taf: flight.alternateTaf },
+  }[weatherAirport] || { code: importedOrigin, airport: flight.origin, metar: flight.originMetar, taf: flight.originTaf };
+
+  async function importSimBrief() {
+    const user = simbriefInput.trim();
+    if (!user) {
+      setSimbriefError("Bitte gib deinen SimBrief Username oder Pilot ID ein.");
+      return;
+    }
+
+    setSimbriefLoading(true);
+    setSimbriefError("");
+    setCopiedClearance(false);
+
+    try {
+      const numeric = /^\d+$/.test(user);
+      const param = numeric ? `userid=${encodeURIComponent(user)}` : `username=${encodeURIComponent(user)}`;
+      const url = `https://www.simbrief.com/api/xml.fetcher.php?${param}&json=v2`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+
+      const text = await response.text();
+      let payload;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok || !payload || payload.error) {
+        throw new Error(
+          payload?.error?.message ||
+            payload?.message ||
+            `SimBrief konnte den OFP nicht laden (HTTP ${response.status}).`
+        );
+      }
+
+      const normalized = normalizeSimBriefOFP(payload);
+      normalized._importedAt = new Date().toISOString();
+      normalized._simbriefUser = user;
+
+      setSimbriefData(normalized);
+      setSelectedAirport({
+        icao: `${normalized.origin.icao}/${normalized.origin.iata || normalized.origin.icao}`,
+        name: normalized.origin.name,
+        role: "Departure",
+      });
+      setSimbriefUser(user);
+      setSimbriefImportedAt(normalized._importedAt);
+      safeStorageSet(SIMBRIEF_STORAGE_KEY, user);
+      safeStorageSet(SIMBRIEF_OFP_STORAGE_KEY, JSON.stringify(normalized));
+      setShowSimBriefModal(false);
+    } catch (error) {
+      setSimbriefError(
+        error?.message ||
+          "Der SimBrief OFP konnte nicht geladen werden. Prüfe Username/Pilot ID und deine Internetverbindung."
+      );
+    } finally {
+      setSimbriefLoading(false);
+    }
+  }
+
+  function clearImportedPlan() {
+    setSimbriefData(null);
+    setSimbriefImportedAt("");
+    safeStorageSet(SIMBRIEF_OFP_STORAGE_KEY, "");
+  }
+
+  async function copyClearance() {
+    const clearance = flight.pdcText ||
+      `${effectiveFlight}, cleared ${importedOrigin} to ${importedDestination}, ${effectiveRoute}, maintain ${flight.cruiseAltitude || "filed altitude"}.`;
+    try {
+      await navigator.clipboard.writeText(clearance);
+      setCopiedClearance(true);
+      window.setTimeout(() => setCopiedClearance(false), 1800);
+    } catch {
+      setSimbriefError("Die Clearance konnte nicht in die Zwischenablage kopiert werden.");
+    }
+  }
 
   const handleTouchStart = (event) => {
     touchStartX.current = event.touches[0].clientX;
@@ -89,19 +438,19 @@ export default function App() {
           <div className="flex h-full items-center whitespace-nowrap text-[13px] font-semibold">
 
             <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">
-              EUR4425/07
+              {effectiveFlight}/01
             </div>
 
             <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">
-              MBRF350
+              {flight.registration || "-"}
             </div>
 
             <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">
-              EUR4425
+              {effectiveFlight}
             </div>
 
             <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">
-              KEWR (10:59) - KDCA (12:17)
+              {importedOrigin} ({headerDepartureTime}) - {importedDestination} ({headerArrivalTime})
             </div>
 
             <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">
@@ -127,8 +476,13 @@ export default function App() {
             <Languages size={22} strokeWidth={1.8} />
           </button>
 
-          <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5">
+          <button
+            onClick={() => { setSimbriefInput(simbriefUser); setSimbriefError(""); setShowSimBriefModal(true); }}
+            title="Import latest SimBrief OFP"
+            className={`relative flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5 ${simbriefData ? "bg-black/[0.03]" : ""}`}
+          >
             <Upload size={22} strokeWidth={1.8} />
+            {simbriefData && <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#65C529]" />}
           </button>
 
           <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5">
@@ -141,6 +495,72 @@ export default function App() {
 
         </div>
       </header>
+
+      {showSimBriefModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-[#C9CBCF] bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-200 bg-[#F1F1F1] px-5 py-4">
+              <div>
+                <h2 className="text-[19px] font-semibold">SimBrief Import</h2>
+                <p className="mt-1 text-[12px] text-gray-500">Import your latest generated OFP into virtual Lido.</p>
+              </div>
+              <button onClick={() => setShowSimBriefModal(false)} className="rounded-md p-2 text-gray-600 hover:bg-black/5">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-5">
+              <div>
+                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-wide text-gray-500">
+                  SimBrief Username / Pilot ID
+                </label>
+                <input
+                  value={simbriefInput}
+                  onChange={(event) => setSimbriefInput(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") importSimBrief(); }}
+                  placeholder="e.g. username or 1234567"
+                  className="h-[48px] w-full rounded-md border border-gray-300 bg-white px-3 text-[15px] outline-none focus:border-[#526C9B] focus:ring-2 focus:ring-[#526C9B]/20"
+                  autoFocus
+                />
+              </div>
+
+              {simbriefError && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-3 text-[13px] text-red-700">
+                  {simbriefError}
+                </div>
+              )}
+
+              {simbriefData && !simbriefError && (
+                <div className="rounded-md border border-green-200 bg-green-50 px-3 py-3 text-[13px] text-green-800">
+                  Imported: {simbriefData.origin?.icao} → {simbriefData.destination?.icao} · {simbriefData.flightNumber || simbriefData.callsign}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={clearImportedPlan}
+                  disabled={!simbriefData || simbriefLoading}
+                  className="h-[48px] rounded-md border border-gray-300 bg-white font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Clear OFP
+                </button>
+                <button
+                  onClick={importSimBrief}
+                  disabled={simbriefLoading}
+                  className="flex h-[48px] items-center justify-center gap-2 rounded-md bg-[#0B1E48] font-semibold text-white hover:bg-[#10285C] disabled:opacity-60"
+                >
+                  {simbriefLoading && <Loader2 size={18} className="animate-spin" />}
+                  {simbriefLoading ? "Importing..." : "Import Latest OFP"}
+                </button>
+              </div>
+
+              <p className="text-[11px] leading-5 text-gray-500">
+                The app only requests your latest OFP when you press Import. Your username and the last imported OFP are stored locally in this browser.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
 
       {/* =========================================================
@@ -169,9 +589,9 @@ export default function App() {
                 <div className="flex flex-col gap-4">
                   <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
                     <div className="grid grid-cols-3 items-center">
-                      <span className="text-[13px] text-gray-500">A359</span>
-                      <span className="text-center text-[20px] font-bold">EUR4425</span>
-                      <span className="text-right text-[13px] text-gray-500">MBRF350</span>
+                      <span className="text-[13px] text-gray-500">{effectiveAircraft}</span>
+                      <span className="text-center text-[20px] font-bold">{effectiveFlight}</span>
+                      <span className="text-right text-[13px] text-gray-500">{flight.registration || "-"}</span>
                     </div>
                     <div className="mt-1 text-center">
                       <span className="rounded-full bg-[#69C92D] px-4 py-1 text-[12px] font-bold text-[#17500D]">
@@ -180,28 +600,28 @@ export default function App() {
                     </div>
                     <div className="mt-1 text-center text-[13px]">(1h 18m)</div>
                     <div className="my-1 flex items-center justify-center gap-5">
-                      <span className="text-[30px] font-bold">KEWR</span>
+                      <span className="text-[30px] font-bold">{importedOrigin}</span>
                       <span className="text-[25px] text-gray-500">→</span>
-                      <span className="text-[30px] font-bold">KDCA</span>
+                      <span className="text-[30px] font-bold">{importedDestination}</span>
                     </div>
                     <div className="grid grid-cols-2 border-b border-gray-300 pb-2 text-center">
                       <div className="border-r border-gray-300">
-                        <div className="text-[12px] text-gray-500">RWY 22R</div>
-                        <div className="mt-1 text-[12px]">07 Sep 2023</div>
+                        <div className="text-[12px] text-gray-500">RWY {flight.origin?.runway || "—"}</div>
+                        <div className="mt-1 text-[12px]">{headerArrivalTime}</div>
                       </div>
                       <div>
-                        <div className="text-[12px] text-gray-500">RWY 01</div>
+                        <div className="text-[12px] text-gray-500">RWY {flight.destination?.runway || "—"}</div>
                         <div className="mt-1 text-[12px]">07 Sep 2023</div>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 py-2">
                       <div className="border-r border-gray-300 px-2">
-                        <TimeRow label="STD" value="10:59" />
-                        <TimeRow label="ETD" value="10:59" />
+                        <TimeRow label="STD" value={headerDepartureTime} />
+                        <TimeRow label="ETD" value={headerDepartureTime} />
                       </div>
                       <div className="px-2">
-                        <TimeRow label="STA" value="12:17" />
-                        <TimeRow label="ETA" value="12:17" />
+                        <TimeRow label="STA" value={headerArrivalTime} />
+                        <TimeRow label="ETA" value={headerArrivalTime} />
                       </div>
                     </div>
                     <div className="pb-1 text-center text-[12px] text-gray-500">- CTOT</div>
@@ -234,7 +654,7 @@ export default function App() {
                       </div>
                       <div className="px-3 py-3">
                         <p className="text-[12px] leading-[1.5]">
-                          KEWR - KZNY BIGGY T_O_C COPES MXE T_O_D KZNY KZDC BAL - KDCA
+                          {importedOrigin} - {effectiveRoute} - {importedDestination}
                         </p>
                       </div>
                     </div>
@@ -256,8 +676,8 @@ export default function App() {
                     <AirportTabs selected={weatherAirport} onChange={setWeatherAirport} />
                     <div className="mt-3 overflow-hidden rounded-md bg-white">
                       <div className="border-b border-gray-200 px-3 py-3">
-                        <div className="text-[16px] font-bold">NEWARK/LIBERTY INTL</div>
-                        <div className="text-[12px] text-gray-500">{weatherAirport}</div>
+                        <div className="text-[16px] font-bold">{weatherSelection.airport?.name || "AIRPORT"}</div>
+                        <div className="text-[12px] text-gray-500">{weatherSelection.code}</div>
                       </div>
                       <div className="space-y-2 px-3 py-3">
                         <WeatherRow label="Ceiling:" value="-" />
@@ -268,20 +688,13 @@ export default function App() {
                       <div className="border-t border-gray-200 px-3 py-3">
                         <div className="mb-1 text-[12px] text-gray-500">METAR: 15m old</div>
                         <pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">
-SA 070951 21004KT 10SM FEW250 25/21 A2979=
+{weatherSelection.metar || "No METAR available in imported OFP"}
                         </pre>
                       </div>
                       <div className="border-t border-gray-200 px-3 py-3">
                         <div className="mb-1 text-[12px] text-gray-500">TAF: Issued at 07 Sep 2023, 08:33</div>
                         <pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">
-Forecast from 09:00 to 12:00
-FT 070833Z 0709/0812 VRB04KT P6SM
-FEW250
-FM071400 23006KT P6SM FEW050 SCT250
-FM071900 15009KT P6SM VCSH SCT050
-SCT150 BKN250
-FM080100 20006KT P6SM FEW050 SCT150
-BKN250
+{weatherSelection.taf || "No TAF available in imported OFP"}
                         </pre>
                       </div>
                     </div>
@@ -346,15 +759,15 @@ BKN250
                     <div className="mt-3 overflow-hidden rounded-md bg-white">
                       <div className="flex items-center justify-between bg-[#F5F5F5] px-3 py-3">
                         <span className="text-[15px] text-gray-600">Planned Fuel (OFP):</span>
-                        <strong className="text-[20px]">8012 kg</strong>
+                        <strong className="text-[20px]">{formatWeight(flight.rampFuel || flight.takeoffFuel, flight.fuelUnits)}</strong>
                       </div>
                       <div className="space-y-1 px-3 py-3">
-                        <FuelRow label="PLN ZFW:" value="180000 kg" />
-                        <FuelRow label="PLN TOW:" value="187412 kg" />
-                        <FuelRow label="PLN LAW:" value="183897 kg" />
-                        <FuelRow label="MTOW:" value="272000 kg" />
-                        <FuelRow label="MLAW:" value="207000 kg" />
-                        <FuelRow label="Max. Discretionary Fuel Cap:" value="23103 kg" />
+                        <FuelRow label="PLN ZFW:" value={formatWeight(flight.zfw, flight.fuelUnits)} />
+                        <FuelRow label="PLN TOW:" value={formatWeight(flight.tow, flight.fuelUnits)} />
+                        <FuelRow label="PLN LAW:" value={formatWeight(flight.ldw, flight.fuelUnits)} />
+                        <FuelRow label="MTOW:" value={formatWeight(flight.maxTow, flight.fuelUnits)} />
+                        <FuelRow label="MLAW:" value={formatWeight(flight.maxLdw, flight.fuelUnits)} />
+                        <FuelRow label="Max. Discretionary Fuel Cap:" value={formatWeight(flight.extraFuel, flight.fuelUnits)} />
                       </div>
                     </div>
                     <button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">
@@ -426,29 +839,29 @@ BKN250
               {/* HEADER */}
               <section className="overflow-hidden rounded-xl border border-[#D5D5D5] bg-white">
                 <div className="flex h-[50px] items-center justify-center bg-[#EEEEEE] text-[20px] font-semibold">
-                  KEWR/EWR <span className="mx-3 text-gray-400">···</span> <span className="text-gray-500">✈</span> <span className="mx-3 text-gray-400">···</span> KDCA/DCA
+                  {importedOrigin}/{flight.origin?.iata || importedOrigin} <span className="mx-3 text-gray-400">···</span> <span className="text-gray-500">✈</span> <span className="mx-3 text-gray-400">···</span> {importedDestination}/{flight.destination?.iata || importedDestination}
                 </div>
                 <div className="grid grid-cols-2 gap-y-5 px-5 py-6 sm:grid-cols-5">
-                  <BriefingValue label="ATC" value="EUR4425" />
-                  <BriefingValue label="STD" value="10:59/11:14" />
-                  <BriefingValue label="STA" value="12:02/12:17" />
-                  <BriefingValue label="A/C TYPE" value="A359" />
-                  <BriefingValue label="REG NO" value="MBRF350" />
+                  <BriefingValue label="ATC" value={effectiveFlight} />
+                  <BriefingValue label="STD" value={headerDepartureTime} />
+                  <BriefingValue label="STA" value={headerArrivalTime} />
+                  <BriefingValue label="A/C TYPE" value={effectiveAircraft} />
+                  <BriefingValue label="REG NO" value={flight.registration || "-"} />
                 </div>
               </section>
 
               {/* PARAMETERS */}
               <section className="rounded-xl border border-[#D5D5D5] bg-white px-5 py-6">
                 <div className="grid grid-cols-2 gap-x-8 gap-y-7 sm:grid-cols-3 lg:grid-cols-6">
-                  <BriefingValue label="CRZ SYS" value="CI30" />
-                  <BriefingValue label="GND DIST" value="183" />
-                  <BriefingValue label="AIR DIST" value="192" />
-                  <BriefingValue label="TOC WIND" value="237/020" />
+                  <BriefingValue label="CRZ SYS" value={flight.costIndex ? `CI${flight.costIndex}` : "-"} />
+                  <BriefingValue label="GND DIST" value={firstValue(getPath(flight, "general.gc_distance"), getPath(flight, "general.route_distance"), "-")} />
+                  <BriefingValue label="AIR DIST" value={firstValue(getPath(flight, "general.air_distance"), "-")} />
+                  <BriefingValue label="TOC WIND" value={`${getPath(flight, "general.avg_wind_dir", "")}/${getPath(flight, "general.avg_wind_spd", "") || "-"}`} />
                   <BriefingValue label="AVG WIND" value="234/014" />
-                  <BriefingValue label="AVG W/C" value="M015" />
+                  <BriefingValue label="AVG W/C" value={getPath(flight, "general.avg_wind_comp", "-")} />
                   <BriefingValue label="IALT" value="220" />
-                  <BriefingValue label="TOC ISA" value="P011" />
-                  <BriefingValue label="AVG FF KGS/HR" value="6023" />
+                  <BriefingValue label="TOC ISA" value={getPath(flight, "general.avg_temp_dev", "-")} />
+                  <BriefingValue label="AVG FF KGS/HR" value={getPath(flight, "fuel.avg_fuel_flow", "-")} />
                   <BriefingValue label="FUEL BIAS" value="P00.0" />
                   <BriefingValue label="TKOF ALTN" value="-" />
                 </div>
@@ -464,11 +877,11 @@ BKN250
                   <span>Structural Limit</span>
                 </div>
                 <div className="px-5 py-4">
-                  <WeightRow name="DOW" planned="140000" />
-                  <WeightRow name="LOAD" planned="40000" actual="0" actualInput />
-                  <WeightRow name="ZFW" planned="180000" actual="0" structural="194000" actualInput />
-                  <WeightRow name="TOW" planned="187412" actual="0" operational="272000" structural="272000" actualInput />
-                  <WeightRow name="LW" planned="183897" actual="0" operational="207000" structural="207000" actualInput />
+                  <WeightRow name="DOW" planned={formatWeight(flight.oew, flight.fuelUnits)} />
+                  <WeightRow name="LOAD" planned={formatWeight(flight.payload, flight.fuelUnits)} />
+                  <WeightRow name="ZFW" planned={formatWeight(flight.zfw, flight.fuelUnits)} structural={formatWeight(flight.maxZfw, flight.fuelUnits)} />
+                  <WeightRow name="TOW" planned={formatWeight(flight.tow, flight.fuelUnits)} operational={formatWeight(flight.maxTow, flight.fuelUnits)} structural={formatWeight(flight.maxTow, flight.fuelUnits)} />
+                  <WeightRow name="LW" planned={formatWeight(flight.ldw, flight.fuelUnits)} operational={formatWeight(flight.maxLdw, flight.fuelUnits)} structural={formatWeight(flight.maxLdw, flight.fuelUnits)} />
                 </div>
               </section>
 
@@ -488,8 +901,8 @@ BKN250
                     <span>kg</span>
                   </div>
 
-                  <FuelLine label="Trip" time="00:35" fuel="3515" />
-                  <FuelLine label="MINCONT" time="00:04" fuel="388" />
+                  <FuelLine label="Trip" time={flight.tripTime} fuel={formatNumber(flight.tripFuel)} />
+                  <FuelLine label="MINCONT" time={formatDuration(flight.contingencyFuel ? 240 : 0)} fuel={formatNumber(flight.contingencyFuel)} />
 
                   {/* ALTERNATE */}
                   <div className="grid grid-cols-[1fr_255px_95px] items-center py-3">
@@ -505,11 +918,11 @@ BKN250
                     <span className="text-right text-[15px]">1182</span>
                   </div>
 
-                  <FuelLine label="Final Reserve" time="00:30" fuel="2327" />
+                  <FuelLine label="Final Reserve" time={getPath(flight, "times.reserve_time", "1800") ? formatDuration(getPath(flight, "times.reserve_time", "1800")) : "00:30"} fuel={formatNumber(flight.reserveFuel)} />
                   <FuelLine label="ETOPS" time="00:00" fuel="0" />
 
                   <div className="my-2 border-t border-gray-300" />
-                  <FuelLine label="Takeoff Fuel" time="01:21" fuel="7412" bold />
+                  <FuelLine label="Takeoff Fuel" time={formatDuration((toNumber(flight.tripFuel)+toNumber(flight.reserveFuel)+toNumber(flight.alternateFuel)) * 0)} fuel={formatNumber(flight.takeoffFuel || flight.minTakeoffFuel)} bold />
 
                   {/* TAXI */}
                   <div className="grid grid-cols-[1fr_255px_95px] items-center py-3">
@@ -530,7 +943,7 @@ BKN250
 
                   <div className="flex items-center justify-between py-3">
                     <span className="text-[16px] font-semibold">Minimum Block Fuel</span>
-                    <span className="text-[15px] font-semibold">8012</span>
+                    <span className="text-[15px] font-semibold">{formatNumber(flight.minTakeoffFuel || flight.rampFuel || flight.takeoffFuel)}</span>
                   </div>
 
                   {/* DISCRETIONARY */}
@@ -549,15 +962,15 @@ BKN250
                   </div>
 
                   <div className="text-[13px] leading-6">
-                    <div>Maximum Discretionary: 23103 kg, LAND</div>
+                    <div>Maximum Discretionary: {formatWeight(flight.extraFuel, flight.fuelUnits)}, LAND</div>
                     <div>no tankering recommended LOSS: 7 USD/TO</div>
                   </div>
 
                   <div className="my-3 border-t border-gray-300" />
 
                   <div className="space-y-1 text-[14px]">
-                    <div>Estimated Landing Fuel: 3897 kg (00:39)</div>
-                    <div>Total Reserve Fuel: 3509 kg (00:42)</div>
+                    <div>Estimated Landing Fuel: {formatWeight(flight.landingFuel, flight.fuelUnits)} ({flight.tripTime})</div>
+                    <div>Total Reserve Fuel: {formatWeight(flight.reserveFuel, flight.fuelUnits)}</div>
                   </div>
 
                   <div className="my-3 border-t border-gray-300" />
@@ -573,7 +986,7 @@ BKN250
                   <span className="text-[16px] font-semibold">Block Fuel</span>
                   <div className="ml-auto flex items-center gap-3">
                     <div className="flex h-[46px] items-center rounded-md bg-white px-4 text-gray-800">
-                      <span className="min-w-[110px] text-right text-[16px] font-semibold">8012</span>
+                      <span className="min-w-[110px] text-right text-[16px] font-semibold">{formatNumber(flight.rampFuel || flight.takeoffFuel || flight.minTakeoffFuel)}</span>
                       <span className="ml-3 text-[14px]">kg</span>
                     </div>
                     <button className="h-[46px] rounded-md bg-[#0B1E48] px-9 text-[17px] font-semibold text-white shadow-sm hover:bg-[#071330]">
@@ -601,7 +1014,11 @@ BKN250
                 </button>
 
                 <div className="divide-y divide-[#E0E0E0]">
-                  {airportsList.map((apt) => {
+                  {[
+                    { icao: `${importedOrigin}/${flight.origin?.iata || importedOrigin}`, name: flight.origin?.name || "DEPARTURE", role: "Departure", runway: flight.origin?.runway },
+                    { icao: `${importedDestination}/${flight.destination?.iata || importedDestination}`, name: flight.destination?.name || "ARRIVAL", role: "Arrival", runway: flight.destination?.runway },
+                    { icao: `${importedAlternate}/${flight.alternate?.iata || importedAlternate}`, name: flight.alternate?.name || "ALTERNATE", role: "Arrival Alternate", runway: flight.alternate?.runway },
+                  ].map((apt) => {
                     const isSelected = selectedAirport.icao === apt.icao;
                     return (
                       <button
@@ -771,7 +1188,7 @@ BKN250
                     Clearances
                   </h2>
                   <p className="mt-1 text-[12px] text-gray-500">
-                    Flight EUR4425 · KEWR → KDCA
+                    Flight {effectiveFlight} · {importedOrigin} → {importedDestination}
                   </p>
                 </div>
 
@@ -795,11 +1212,11 @@ BKN250
 
                     <div className="p-4">
                       <div className="rounded-md bg-[#F4F4F4] p-4 font-mono text-[13px] leading-[1.7]">
-                        <div>EUR4425, cleared to Washington Reagan</div>
-                        <div>via BIGGY departure, then as filed</div>
-                        <div>Maintain 5000 feet, expect FL350</div>
-                        <div>Departure frequency 119.2</div>
-                        <div>Squawk 4425</div>
+                        <div>{flight.pdcText || `${effectiveFlight}, cleared ${importedOrigin} to ${importedDestination}`}</div>
+                        <div>{effectiveRoute}</div>
+                        <div>Initial cruise / cleared altitude: {flight.cruiseAltitude || "-"}</div>
+                        <div>Aircraft: {effectiveAircraft}</div>
+                        <div>Squawk: {getPath(flight, "atc.squawk", "-")}</div>
                       </div>
                     </div>
                   </div>
@@ -812,11 +1229,11 @@ BKN250
                       </div>
 
                       <div className="space-y-3">
-                        <WeatherRow label="Destination" value="KDCA" />
-                        <WeatherRow label="Departure" value="KEWR" />
-                        <WeatherRow label="SID" value="BIGGY4" />
-                        <WeatherRow label="Cruise" value="FL350" />
-                        <WeatherRow label="Squawk" value="4425" />
+                        <WeatherRow label="Destination" value={importedDestination} />
+                        <WeatherRow label="Departure" value={importedOrigin} />
+                        <WeatherRow label="SID" value={firstValue(getPath(flight, "general.sid", ""), getPath(flight, "origin.sid", "-"), "-")} />
+                        <WeatherRow label="Cruise" value={flight.cruiseAltitude || "-"} />
+                        <WeatherRow label="Squawk" value={getPath(flight, "atc.squawk", "-")} />
                       </div>
                     </div>
 
@@ -837,8 +1254,9 @@ BKN250
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <button className="h-[48px] rounded-md border border-gray-300 bg-white font-semibold hover:bg-gray-50">
-                      Copy Clearance
+                    <button onClick={copyClearance} className="flex h-[48px] items-center justify-center gap-2 rounded-md border border-gray-300 bg-white font-semibold hover:bg-gray-50">
+                      {copiedClearance ? <CheckCircle2 size={18} /> : <Copy size={18} />}
+                      {copiedClearance ? "Copied" : "Copy Clearance"}
                     </button>
 
                     <button className="h-[48px] rounded-md bg-[#0B1E48] font-semibold text-white hover:bg-[#10285C]">
@@ -866,7 +1284,7 @@ BKN250
                   </h2>
 
                   <p className="mt-1 text-[12px] text-gray-500">
-                    EUR4425 · KEWR → KDCA · A359
+                    {effectiveFlight} · {importedOrigin} → {importedDestination} · {effectiveAircraft}
                   </p>
                 </div>
 
@@ -886,67 +1304,35 @@ BKN250
                     </thead>
 
                     <tbody className="divide-y divide-gray-200">
-
-                      <tr className="hover:bg-gray-50">
-                        <td className="px-4 py-3 font-semibold">KEWR</td>
-                        <td className="px-4 py-3">—</td>
-                        <td className="px-4 py-3">210/04</td>
-                        <td className="px-4 py-3">0</td>
-                        <td className="px-4 py-3">00:00</td>
-                        <td className="px-4 py-3">7412</td>
-                        <td className="px-4 py-3">10:59</td>
-                      </tr>
-
-                      <tr className="hover:bg-gray-50">
-                        <td className="px-4 py-3 font-semibold">BIGGY</td>
-                        <td className="px-4 py-3">120</td>
-                        <td className="px-4 py-3">220/12</td>
-                        <td className="px-4 py-3">18</td>
-                        <td className="px-4 py-3">00:05</td>
-                        <td className="px-4 py-3">6890</td>
-                        <td className="px-4 py-3">11:04</td>
-                      </tr>
-
-                      <tr className="hover:bg-gray-50">
-                        <td className="px-4 py-3 font-semibold">COPES</td>
-                        <td className="px-4 py-3">250</td>
-                        <td className="px-4 py-3">230/15</td>
-                        <td className="px-4 py-3">41</td>
-                        <td className="px-4 py-3">00:12</td>
-                        <td className="px-4 py-3">6102</td>
-                        <td className="px-4 py-3">11:11</td>
-                      </tr>
-
-                      <tr className="hover:bg-gray-50">
-                        <td className="px-4 py-3 font-semibold">MXE</td>
-                        <td className="px-4 py-3">350</td>
-                        <td className="px-4 py-3">237/20</td>
-                        <td className="px-4 py-3">86</td>
-                        <td className="px-4 py-3">00:28</td>
-                        <td className="px-4 py-3">4820</td>
-                        <td className="px-4 py-3">11:27</td>
-                      </tr>
-
-                      <tr className="hover:bg-gray-50">
-                        <td className="px-4 py-3 font-semibold">BAL</td>
-                        <td className="px-4 py-3">350</td>
-                        <td className="px-4 py-3">235/17</td>
-                        <td className="px-4 py-3">142</td>
-                        <td className="px-4 py-3">00:39</td>
-                        <td className="px-4 py-3">4105</td>
-                        <td className="px-4 py-3">11:38</td>
-                      </tr>
-
-                      <tr className="bg-[#F5F5F5] font-semibold">
-                        <td className="px-4 py-3">KDCA</td>
-                        <td className="px-4 py-3">—</td>
-                        <td className="px-4 py-3">—</td>
-                        <td className="px-4 py-3">183</td>
-                        <td className="px-4 py-3">00:35</td>
-                        <td className="px-4 py-3">3515</td>
-                        <td className="px-4 py-3">12:17</td>
-                      </tr>
-
+                      {flight.navlog.length > 0 ? (
+                        flight.navlog.map((fix, index) => {
+                          const ident = firstValue(fix.ident, fix.fix_ident, fix.name, `FIX${index + 1}`);
+                          const altitude = firstValue(fix.altitude_feet, fix.altitude, fix.level, "-");
+                          const windDir = firstValue(fix.wind_dir, fix.wind_direction, "-");
+                          const windSpd = firstValue(fix.wind_spd, fix.wind_speed, "-");
+                          const dist = firstValue(fix.distance, fix.distance_nm, "-");
+                          const legTime = firstValue(fix.time_leg, fix.leg_time, "-");
+                          const fuelRemaining = firstValue(fix.fuel_remaining, fix.fuel_remain, "-");
+                          const eta = formatUtcTime(firstValue(fix.eta, fix.time_total_epoch));
+                          return (
+                            <tr key={`${ident}-${index}`} className={index === flight.navlog.length - 1 ? "bg-[#F5F5F5] font-semibold" : "hover:bg-gray-50"}>
+                              <td className="px-4 py-3 font-semibold">{ident}</td>
+                              <td className="px-4 py-3">{altitude}</td>
+                              <td className="px-4 py-3">{windDir}/{windSpd}</td>
+                              <td className="px-4 py-3">{dist}</td>
+                              <td className="px-4 py-3">{legTime}</td>
+                              <td className="px-4 py-3">{fuelRemaining}</td>
+                              <td className="px-4 py-3">{eta}</td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={7} className="px-4 py-10 text-center text-gray-500">
+                            Import a SimBrief OFP to populate the navigation log.
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
 
                   </table>
@@ -962,7 +1348,7 @@ BKN250
                   </div>
 
                   <div className="text-[13px] leading-[1.7] text-gray-700">
-                    KEWR → BIGGY → COPES → MXE → BAL → KDCA
+                    {importedOrigin} → {effectiveRoute.replace(/\s+/g, " → ")} → {importedDestination}
                   </div>
                 </section>
 
@@ -972,9 +1358,9 @@ BKN250
                   </div>
 
                   <div className="space-y-2">
-                    <WeatherRow label="Distance" value="183 NM" />
-                    <WeatherRow label="Air Distance" value="192 NM" />
-                    <WeatherRow label="Time" value="00:35" />
+                    <WeatherRow label="Distance" value={`${firstValue(getPath(flight, "general.gc_distance", "-"), "-")} NM`} />
+                    <WeatherRow label="Air Distance" value={`${firstValue(getPath(flight, "general.air_distance", "-"), "-")} NM`} />
+                    <WeatherRow label="Time" value={flight.tripTime} />
                   </div>
                 </section>
 
@@ -984,9 +1370,9 @@ BKN250
                   </div>
 
                   <div className="space-y-2">
-                    <WeatherRow label="Trip Fuel" value="3515 kg" />
-                    <WeatherRow label="Minimum Block" value="8012 kg" />
-                    <WeatherRow label="Takeoff Fuel" value="7412 kg" />
+                    <WeatherRow label="Trip Fuel" value={formatWeight(flight.tripFuel, flight.fuelUnits)} />
+                    <WeatherRow label="Minimum Block" value={formatWeight(flight.minTakeoffFuel || flight.rampFuel, flight.fuelUnits)} />
+                    <WeatherRow label="Takeoff Fuel" value={formatWeight(flight.takeoffFuel, flight.fuelUnits)} />
                   </div>
                 </section>
 
