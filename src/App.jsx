@@ -315,6 +315,36 @@ function normalizeNotams(ofp) {
   return texts;
 }
 
+function normalizeSigwxCharts(ofp) {
+  const result = [];
+  const seen = new Set();
+  const add = (item, directory = "") => {
+    if (!item) return;
+    const name = typeof item === "string" ? item : firstValue(item.name, item.title, "");
+    const link = typeof item === "string" ? item : firstValue(item.link, item.url, item.href, "");
+    if (!name && !link) return;
+    if (!/sigwx|significant weather/i.test(`${name} ${link}`)) return;
+    let url = link;
+    if (url && !/^https?:\/\//i.test(url)) url = `${directory || "https://www.simbrief.com/ofp/uads/"}${String(url).replace(/^\/+/, "")}`;
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    result.push({ name: name || "SIGWX", url });
+  };
+
+  const images = ofp?.images || ofp?.image || {};
+  const directory = firstValue(images?.directory, ofp?.images?.directory, "https://www.simbrief.com/ofp/uads/");
+  toArray(images?.map).forEach((item) => add(item, directory));
+  toArray(images?.maps).forEach((item) => add(item, directory));
+  recursiveObjectValues(images).forEach((item) => add(item, directory));
+
+  // Some JSON-v2 responses expose the image list deeper in the OFP object.
+  recursiveObjectValues(ofp).forEach((item) => {
+    if (item && typeof item === "object") add(item, directory);
+  });
+
+  return result;
+}
+
 function rootOrNested(ofp, nested, keys) {
   const values = [];
   keys.forEach((key) => values.push(nested?.[key], ofp?.[key]));
@@ -393,6 +423,7 @@ function normalizeSimBriefOFP(ofp) {
     weather,
     navlog,
     notams: normalizeNotams(ofp),
+    sigwxCharts: normalizeSigwxCharts(ofp),
     origin,
     destination,
     alternate: alternates[0] || null,
@@ -600,6 +631,11 @@ const NIGHT_MODE_CSS = `
 [data-night="true"] [class*="bg-[#F4F3ED]"],
 [data-night="true"] [class*="bg-[#E8E8E3]"] { background:rgba(25,29,34,.42) !important; }
 [data-night="true"] pre { color:#e4e7eb !important; }
+[data-night="true"] .night-navlog, [data-night="true"] .night-navlog section { background:#24292f !important; color:#e5e7eb !important; border-color:#3b4149 !important; }
+[data-night="true"] .night-navlog .lido-waypoint, [data-night="true"] .night-navlog .lido-waypoint-main { background:#30353b !important; border-color:#474e57 !important; color:#e5e7eb !important; }
+[data-night="true"] .night-navlog .lido-waypoint-skipped { background:#3a3d41 !important; }
+[data-night="true"] .night-navlog .lido-column-spacer { background:#24292f !important; border-color:#3b4149 !important; }
+[data-night="true"] .night-navlog input { background:#171a1e !important; color:#f2f4f7 !important; border-color:#4a515a !important; }
 `;
 
 if (typeof document !== "undefined" && !document.getElementById("virtual-lido-night-mode")) {
@@ -649,6 +685,7 @@ export default function App() {
   const [copiedClearance, setCopiedClearance] = useState(false);
   const [showRouteLabels, setShowRouteLabels] = useState(true);
   const [nightMode, setNightMode] = useState(false);
+  const [weatherChartsOpen, setWeatherChartsOpen] = useState(false);
   const [dispatcherName] = useState(() => DISPATCHER_NAMES[Math.floor(Math.random() * DISPATCHER_NAMES.length)]);
   const touchStartX = useRef(null);
 
@@ -940,6 +977,25 @@ export default function App() {
         </div>
       )}
 
+      {weatherChartsOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={() => setWeatherChartsOpen(false)}>
+          <div className="flex max-h-[92dvh] w-full max-w-[1100px] flex-col overflow-hidden rounded-xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-3">
+              <div><div className="text-[17px] font-semibold">Significant Weather Charts</div><div className="text-[11px] text-gray-500">From the current SimBrief OFP</div></div>
+              <button onClick={() => setWeatherChartsOpen(false)} className="rounded-md p-2 hover:bg-gray-100"><X size={20} /></button>
+            </div>
+            <div className="min-h-0 overflow-y-auto bg-[#E5E7EB] p-3">
+              {flight.sigwxCharts?.length ? flight.sigwxCharts.map((chart, index) => (
+                <div key={`${chart.url}-${index}`} className="mb-3 overflow-hidden rounded-lg bg-white shadow-sm last:mb-0">
+                  <div className="border-b border-gray-200 px-3 py-2 text-[12px] font-semibold">{chart.name}</div>
+                  <img src={chart.url} alt={chart.name} className="block h-auto w-full" loading="eager" />
+                </div>
+              )) : <div className="p-10 text-center text-[13px] text-gray-500">This OFP does not contain a SIGWX chart.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="min-h-0 flex-1 overflow-hidden bg-[#E5E7EB]">
         {activeTab === "dashboard" && (
           <div className="relative h-full w-full" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
@@ -960,13 +1016,13 @@ export default function App() {
                     <button className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open in mPilot</button>
                   </div>
                 </section>
-                <DashboardWeatherCard airports={airportsForWeather} selected={weatherAirport} onChange={setWeatherAirport} live={weatherLive} loading={weatherLoading} onRefresh={() => refreshLiveWeather(flight)} />
+                <DashboardWeatherCard flight={flight} airports={airportsForWeather} selected={weatherAirport} onChange={setWeatherAirport} live={weatherLive} loading={weatherLoading} onRefresh={() => refreshLiveWeather(flight)} onOpenCharts={() => setWeatherChartsOpen(true)} />
               </div>
             </div>
 
             <div className={`${dashboardPage === 1 ? "block" : "hidden"} h-full overflow-y-auto p-3`}>
               <div className="grid min-h-full grid-cols-1 gap-4 lg:grid-cols-3">
-                <DashboardNotamCard flight={flight} airports={airportsForWeather} selected={weatherAirport} onChange={setWeatherAirport} live={weatherLive} loading={weatherLoading} />
+                <DashboardNotamCard flight={flight} airports={airportsForWeather} selected={weatherAirport} onChange={setWeatherAirport} live={weatherLive} loading={weatherLoading} onOpenCharts={() => setWeatherChartsOpen(true)} />
                 <div className="flex flex-col gap-4">
                   <FuelSummaryCard flight={flight} fuelOrdered={fuelOrdered} />
                   <DocumentsCard />
@@ -1076,7 +1132,7 @@ export default function App() {
                   <div className="flex gap-1"><button onClick={() => setMapSubTab("WX")} className={`px-5 py-2 text-[13px] font-semibold ${mapSubTab === "WX" ? "border-t-2 border-[#526C9B] bg-[#E0E0E0] text-gray-900" : "text-gray-500"}`}>WX</button><button onClick={() => setMapSubTab("NOTAM")} className={`px-5 py-2 text-[13px] font-semibold ${mapSubTab === "NOTAM" ? "border-t-2 border-[#526C9B] bg-[#E0E0E0] text-gray-900" : "text-gray-500"}`}>NOTAM</button></div>
                   <button onClick={() => refreshLiveWeather(flight)} className="mb-1 flex items-center gap-1 rounded border border-[#B0B0B0] bg-white px-3 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"><RefreshCw size={13} /> Refresh</button>
                 </div>
-                <div className="h-[242px] overflow-y-auto p-4">{selectedAirportCode ? <MapDetail airportCode={selectedAirportCode} flight={flight} alternates={alternates} tab={mapSubTab} weatherLive={weatherLive[selectedAirportCode]} loading={weatherLoading} /> : null}</div>
+                <div className="h-[242px] overflow-y-auto p-4">{selectedAirportCode ? <MapDetail airportCode={selectedAirportCode} flight={flight} alternates={alternates} tab={mapSubTab} weatherLive={weatherLive[selectedAirportCode]} loading={weatherLoading} onOpenCharts={() => setWeatherChartsOpen(true)} /> : null}</div>
               </div>
             </section>
           </div>
@@ -1113,7 +1169,7 @@ export default function App() {
         )}
 
         {activeTab === "navlog" && (
-          <div className="h-full overflow-y-auto bg-[#DDE0E3]">
+          <div className="night-navlog h-full overflow-y-auto bg-[#DDE0E3]">
             <div className="mx-auto max-w-[1180px]">
 
               {/* Lido-style fuel / reserve strip */}
@@ -1282,8 +1338,8 @@ export default function App() {
                     return (
                       <div
                         key={`${ident}-${index}`}
-                        className={`overflow-hidden rounded-[4px] border border-[#C5C8CB] shadow-[0_1px_2px_rgba(0,0,0,.12)] ${
-                          skipped ? "bg-[#B9BBBE]" : "bg-[#D5D7D9]"
+                        className={`lido-waypoint overflow-hidden rounded-[4px] border border-[#C5C8CB] shadow-[0_1px_2px_rgba(0,0,0,.12)] ${
+                          skipped ? "lido-waypoint-skipped bg-[#B9BBBE]" : "lido-waypoint-main bg-[#D5D7D9]"
                         }`}
                       >
                         {/* Main waypoint line */}
@@ -1543,16 +1599,15 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
       <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/25" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.08),rgba(235,235,225,.14))]" />
 
-      {view && path && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
+      {view && (
+        <svg className="pointer-events-none absolute inset-0 z-[2] h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
           <g className="lido-grid-lines">
             {grid.map((line, index) => (
               <line key={`grid-${line.type}-${line.value}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} stroke="#8A8F94" strokeWidth="0.8" strokeDasharray="2 4" opacity="0.34" />
             ))}
           </g>
-          <path d={path} fill="none" stroke="white" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
-          <path d={path} fill="none" stroke="#151515" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+          {path && <path d={path} fill="none" stroke="#050505" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />}
+          </svg>
       )}
 
       {airportPoints.map((airport) => {
@@ -1565,7 +1620,7 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
         return (
           <div
             key={`${airport.kind}-${airport.label}`}
-            className="absolute z-[5] -translate-x-1/2 -translate-y-1/2"
+            className={`absolute -translate-x-1/2 -translate-y-1/2 ${airport.kind === "destination" ? "z-[12]" : airport.kind === "origin" ? "z-[11]" : "z-[4]"}`}
             style={{ left: airport.point.x, top: airport.point.y }}
           >
             <div className="relative flex items-center justify-center">
@@ -1671,28 +1726,28 @@ function makeTiles(zoom, bounds, width, height) {
   return tiles;
 }
 
-function DashboardWeatherCard({ airports, selected, onChange, live, loading, onRefresh }) {
+function DashboardWeatherCard({ flight, airports, selected, onChange, live, loading, onRefresh, onOpenCharts }) {
   const entry = airports.find((item) => item.id === selected) || airports[0];
   const code = airportCode(entry?.airport);
   const current = live?.[code];
-  return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><div className="flex items-center justify-between"><h2 className="text-center text-[19px] font-semibold">Weather</h2><button onClick={onRefresh} className="rounded p-1 text-gray-500 hover:bg-black/5"><RefreshCw size={15} className={loading ? "animate-spin" : ""} /></button></div><DynamicAirportTabs airports={airports} selected={selected} onChange={onChange} /><WeatherPanel airport={entry?.airport} importedMetar={entry?.metar} importedTaf={entry?.taf} live={current} loading={loading} /></section>;
+  return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><div className="flex items-center justify-between"><h2 className="text-center text-[19px] font-semibold">Weather</h2><button onClick={onRefresh} className="rounded p-1 text-gray-500 hover:bg-black/5"><RefreshCw size={15} className={loading ? "animate-spin" : ""} /></button></div><DynamicAirportTabs airports={airports} selected={selected} onChange={onChange} /><WeatherPanel airport={entry?.airport} importedMetar={entry?.metar} importedTaf={entry?.taf} live={current} loading={loading} charts={flight.sigwxCharts} onOpenCharts={onOpenCharts} /></section>;
 }
 
-function DashboardNotamCard({ flight, airports, selected, onChange, live, loading }) {
+function DashboardNotamCard({ flight, airports, selected, onChange, live, loading, onOpenCharts }) {
   const entry = airports.find((item) => item.id === selected) || airports[0];
   const code = airportCode(entry?.airport);
-  return <section className="flex h-full min-h-0 flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">NOTAM & Weather</h2><DynamicAirportTabs airports={airports} selected={selected} onChange={onChange} /><div className="mt-3 min-h-[220px] max-h-[300px] overflow-y-auto rounded-md bg-white">{flight.notams?.length ? flight.notams.map((notam, index) => <NotamItem key={`${index}-${notam.slice(0, 20)}`} text={notam} last={index === flight.notams.length - 1} />) : <div className="px-4 py-8 text-center text-[13px] text-gray-500">No NOTAMs were returned in this OFP.</div>}</div><div className="mt-3"><WeatherPanel airport={entry?.airport} importedMetar={entry?.metar} importedTaf={entry?.taf} live={live?.[code]} loading={loading} /></div><button className="mt-3 h-[50px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">View NOTAMs for All Airports</button></section>;
+  return <section className="flex h-full min-h-0 flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">NOTAM & Weather</h2><DynamicAirportTabs airports={airports} selected={selected} onChange={onChange} /><div className="mt-3 min-h-[220px] max-h-[300px] overflow-y-auto rounded-md bg-white">{flight.notams?.length ? flight.notams.map((notam, index) => <NotamItem key={`${index}-${notam.slice(0, 20)}`} text={notam} last={index === flight.notams.length - 1} />) : <div className="px-4 py-8 text-center text-[13px] text-gray-500">No NOTAMs were returned in this OFP.</div>}</div><div className="mt-3"><WeatherPanel airport={entry?.airport} importedMetar={entry?.metar} importedTaf={entry?.taf} live={live?.[code]} loading={loading} charts={flight.sigwxCharts} onOpenCharts={onOpenCharts} /></div><button className="mt-3 h-[50px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">View NOTAMs for All Airports</button></section>;
 }
 
 function DynamicAirportTabs({ airports, selected, onChange }) {
   return <div className="mt-3 flex gap-1 overflow-x-auto rounded-lg bg-[#D0D0D2] p-1">{airports.map((airport) => <button key={airport.id} onClick={() => onChange(airport.id)} className={`min-w-[98px] flex-1 whitespace-nowrap rounded-md px-3 py-2 text-[12px] font-semibold ${selected === airport.id ? "bg-white shadow-sm" : "text-gray-600"}`}>{airport.label}</button>)}</div>;
 }
 
-function WeatherPanel({ airport, importedMetar, importedTaf, live, loading }) {
+function WeatherPanel({ airport, importedMetar, importedTaf, live, loading, charts = [], onOpenCharts }) {
   const code = airportCode(airport);
   const metar = firstValue(live?.metar, importedMetar, "No METAR available");
   const taf = firstValue(live?.taf, importedTaf, "No TAF available");
-  return <div className="mt-3 overflow-hidden rounded-md bg-white"><div className="border-b border-gray-200 px-3 py-3"><div className="text-[16px] font-bold">{airport?.name || "UNKNOWN AIRPORT"}</div><div className="text-[12px] text-gray-500">{code}</div></div><div className="space-y-2 px-3 py-3"><WeatherRow label="Ceiling:" value="-" /><WeatherRow label="Visibility:" value={weatherVisibility(metar)} /><WeatherRow label="Wind:" value={weatherWind(metar)} /><WeatherRow label="Temperature:" value={weatherTemp(metar)} /></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 flex items-center justify-between text-[12px] text-gray-500"><span>METAR</span><span>{loading ? "updating..." : "current / OFP fallback"}</span></div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{metar}</pre></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 text-[12px] text-gray-500">TAF</div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{taf}</pre></div><button onClick={() => window.open("https://aviationweather.gov/sigwx/", "_blank", "noopener,noreferrer")} className="m-3 h-[45px] w-[calc(100%-24px)] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Significant Weather Charts</button></div>;
+  return <div className="mt-3 overflow-hidden rounded-md bg-white"><div className="border-b border-gray-200 px-3 py-3"><div className="text-[16px] font-bold">{airport?.name || "UNKNOWN AIRPORT"}</div><div className="text-[12px] text-gray-500">{code}</div></div><div className="space-y-2 px-3 py-3"><WeatherRow label="Ceiling:" value="-" /><WeatherRow label="Visibility:" value={weatherVisibility(metar)} /><WeatherRow label="Wind:" value={weatherWind(metar)} /><WeatherRow label="Temperature:" value={weatherTemp(metar)} /></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 flex items-center justify-between text-[12px] text-gray-500"><span>METAR</span><span>{loading ? "updating..." : "current / OFP fallback"}</span></div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{metar}</pre></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 text-[12px] text-gray-500">TAF</div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{taf}</pre></div><button disabled={!charts.length} onClick={onOpenCharts} className="m-3 h-[45px] w-[calc(100%-24px)] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50">{charts.length ? "Significant Weather Charts" : "SIGWX not included in OFP"}</button></div>;
 }
 
 function FuelSummaryCard({ flight, fuelOrdered }) { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Fuel</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><div className="flex items-center justify-between bg-[#F5F5F5] px-3 py-3"><span className="text-[15px] text-gray-600">Planned Fuel (OFP):</span><strong className="text-[20px]">{flight.rampFuel || flight.takeoffFuel || "-"} kg</strong></div><div className="space-y-1 px-3 py-3"><FuelRow label="Trip Fuel:" value={`${flight.tripFuel || "-"} kg`} /><FuelRow label="Alternate:" value={`${flight.alternateFuel || "-"} kg`} /><FuelRow label="Reserve:" value={`${flight.reserveFuel || "-"} kg`} /><FuelRow label="Taxi:" value={`${flight.taxiFuel || "-"} kg`} /><FuelRow label="Landing:" value={`${flight.landingFuel || "-"} kg`} /></div></div><div className={`mt-3 rounded-md px-3 py-3 text-[13px] font-semibold ${fuelOrdered ? "bg-[#E6F6DA] text-[#17500D]" : "bg-white text-gray-600"}`}>{fuelOrdered ? "Fuel order: ORDERED" : "Fuel order: NOT ORDERED"}</div><button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open Fuel</button></section>; }
@@ -1705,13 +1760,13 @@ function AlternateCard({ airport, index, weatherLive }) { return <div className=
 
 function MapAirportButton({ airport, code, role, selected, onClick, color }) { const dot = color === "green" ? "bg-[#65C52D]" : color === "orange" ? "bg-[#F2A243]" : "bg-[#8064A2]"; return <button onClick={onClick} className={`flex w-full items-center gap-3 px-4 py-3 text-left ${selected ? "bg-[#7A8EA8] text-white" : "hover:bg-black/5"}`}><span className={`h-3 w-3 rounded-full ${dot}`} /><span className="min-w-0"><span className="block text-[14px] font-bold">{code || "----"}</span><span className={`block text-[11px] ${selected ? "text-gray-200" : "text-gray-500"}`}>{role} · {airport?.name || "Unknown"}</span></span></button>; }
 
-function MapDetail({ airportCode: code, flight, alternates, tab, weatherLive }) {
+function MapDetail({ airportCode: code, flight, alternates, tab, weatherLive, onOpenCharts }) {
   const all = [flight.origin, flight.destination, ...alternates];
   const airport = all.find((apt) => airportCode(apt) === code) || {};
   if (tab === "WX") {
     const importedMetar = firstValue(airport.metar, airportCode(airport) === airportCode(flight.origin) ? flight.originMetar : airportCode(airport) === airportCode(flight.destination) ? flight.destinationMetar : flight.alternateMetar);
     const importedTaf = firstValue(airport.taf, airportCode(airport) === airportCode(flight.origin) ? flight.originTaf : airportCode(airport) === airportCode(flight.destination) ? flight.destinationTaf : flight.alternateTaf);
-    return <WeatherPanel airport={airport} importedMetar={importedMetar} importedTaf={importedTaf} live={weatherLive} />;
+    return <WeatherPanel airport={airport} importedMetar={importedMetar} importedTaf={importedTaf} live={weatherLive} charts={flight.sigwxCharts} onOpenCharts={onOpenCharts} />;
   }
   return <div className="space-y-2">{flight.notams?.length ? flight.notams.map((n, i) => <NotamItem key={i} text={n} last={i === flight.notams.length - 1} />) : <div className="py-8 text-center text-[13px] text-gray-500">No NOTAMs were returned in this OFP.</div>}</div>;
 }
