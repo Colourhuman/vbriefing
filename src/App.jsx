@@ -107,11 +107,180 @@ function formatDuration(seconds) {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
-function formatUtcTime(epochSeconds) {
-  const timestamp = toNumber(epochSeconds, NaN);
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
-  const date = new Date(timestamp * 1000);
-  return date.toISOString().slice(11, 16);
+function formatUtcTime(value) {
+  if (value === undefined || value === null || value === "") return "-";
+
+  // SimBrief JSON v2 returns ISO timestamps for time fields.
+  if (typeof value === "string" && /[T:-]/.test(value)) {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toISOString().slice(11, 16);
+  }
+
+  const raw = String(value).trim();
+
+  // HHMM timestamps occasionally appear in older/alternate formats.
+  if (/^\d{4}$/.test(raw)) {
+    return `${raw.slice(0, 2)}:${raw.slice(2, 4)}`;
+  }
+
+  // Unix timestamp (seconds).
+  const timestamp = Number(value);
+  if (Number.isFinite(timestamp) && timestamp > 0) {
+    const date = new Date(timestamp > 1e12 ? timestamp : timestamp * 1000);
+    if (!Number.isNaN(date.getTime())) return date.toISOString().slice(11, 16);
+  }
+
+  return "-";
+}
+
+function formatTimeOrDash(value) {
+  const result = formatUtcTime(value);
+  return result === "-" ? "--:--" : result;
+}
+
+function formatAltitude(value) {
+  if (value === undefined || value === null || value === "") return "-";
+  const raw = String(value);
+  if (/^FL/i.test(raw)) return raw.toUpperCase();
+  const number = Number(value);
+  if (Number.isFinite(number)) {
+    return number >= 1000 ? `FL${Math.round(number / 100)}` : String(number);
+  }
+  return raw;
+}
+
+function parseLatLon(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const n = Number(value);
+  if (Number.isFinite(n)) return n;
+
+  const raw = String(value).trim().toUpperCase();
+  const match = raw.match(/^([NS])(\d{2})(\d{2}(?:\.\d+)?)$/);
+  if (match) {
+    const degrees = Number(match[2]);
+    const minutes = Number(match[3]);
+    const result = degrees + minutes / 60;
+    return match[1] === "S" ? -result : result;
+  }
+  const matchLong = raw.match(/^([EW])(\d{3})(\d{2}(?:\.\d+)?)$/);
+  if (matchLong) {
+    const degrees = Number(matchLong[2]);
+    const minutes = Number(matchLong[3]);
+    const result = degrees + minutes / 60;
+    return matchLong[1] === "W" ? -result : result;
+  }
+  return null;
+}
+
+function fixLat(fix) {
+  return parseLatLon(firstValue(fix?.pos_lat, fix?.lat, fix?.latitude, fix?.position?.lat));
+}
+
+function fixLon(fix) {
+  return parseLatLon(firstValue(fix?.pos_long, fix?.lon, fix?.lng, fix?.longitude, fix?.position?.lon, fix?.position?.long));
+}
+
+function normalizeNavlog(rawNavlog) {
+  const candidates = [
+    rawNavlog?.fix,
+    rawNavlog?.fixes,
+    rawNavlog?.waypoint,
+    rawNavlog?.waypoints,
+    rawNavlog,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.length) return candidate.filter(Boolean);
+    if (candidate && typeof candidate === "object") {
+      if (candidate.ident || candidate.fix_ident || candidate.name) return [candidate];
+      const values = Object.values(candidate).filter(
+        (item) => item && typeof item === "object" && (item.ident || item.fix_ident || item.name || item.pos_lat)
+      );
+      if (values.length) return values;
+    }
+  }
+
+  return [];
+}
+
+function formatLegTime(value) {
+  if (value === undefined || value === null || value === "") return "-";
+  if (typeof value === "string" && /^\d{1,2}:\d{2}(?::\d{2})?$/.test(value.trim())) {
+    const parts = value.trim().split(":");
+    return parts.length === 3 ? `${parts[0]}:${parts[1]}` : value.trim();
+  }
+  const n = Number(value);
+  if (Number.isFinite(n) && n >= 0) return formatDuration(n);
+  return String(value);
+}
+
+function extractAlternates(ofp) {
+  const found = [];
+  const seen = new Set();
+
+  const addAirport = (value, keyHint = "") => {
+    if (!value || typeof value !== "object") return;
+    const airport = airportFromOFP(value);
+    if (!airport.icao) return;
+    if (airport.icao === ofp?.origin?.icao_code || airport.icao === ofp?.destination?.icao_code) return;
+    const key = airport.icao.toUpperCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      airport.role = "Alternate";
+      found.push({
+        ...airport,
+        lat: parseLatLon(firstValue(value.pos_lat, value.lat, value.latitude)),
+        lon: parseLatLon(firstValue(value.pos_long, value.lon, value.longitude)),
+      });
+    }
+  };
+
+  const walk = (node, keyHint = "") => {
+    if (!node || typeof node !== "object") return;
+
+    if (Array.isArray(node)) {
+      node.forEach((item) => walk(item, keyHint));
+      return;
+    }
+
+    const hint = keyHint.toLowerCase();
+    if (hint.includes("altn") || hint.includes("alternate")) {
+      addAirport(node, hint);
+    }
+
+    for (const [key, value] of Object.entries(node)) {
+      const lower = key.toLowerCase();
+
+      // Explicit alternate airport object(s)
+      if (lower.includes("altn") || lower.includes("alternate")) {
+        if (typeof value === "string") {
+          for (const token of value.split(/[,\s]+/).filter(Boolean)) {
+            if (/^[A-Z]{4}$/i.test(token)) {
+              if (!seen.has(token.toUpperCase())) {
+                seen.add(token.toUpperCase());
+                found.push({
+                  icao: token.toUpperCase(),
+                  iata: "",
+                  name: token.toUpperCase(),
+                  role: "Alternate",
+                  runway: "",
+                  lat: null,
+                  lon: null,
+                });
+              }
+            }
+          }
+        } else {
+          walk(value, lower);
+        }
+      } else if (value && typeof value === "object") {
+        walk(value, lower);
+      }
+    }
+  };
+
+  walk(ofp);
+  return found;
 }
 
 function airportFromOFP(value = {}) {
@@ -140,9 +309,21 @@ function normalizeNotams(rawNotams) {
 }
 
 function normalizeSimBriefOFP(ofp) {
-  const origin = airportFromOFP(ofp?.origin || {});
-  const destination = airportFromOFP(ofp?.destination || {});
-  const alternate = airportFromOFP(ofp?.alternate || ofp?.altn || {});
+  const originRaw = ofp?.origin || {};
+  const destinationRaw = ofp?.destination || {};
+  const origin = {
+    ...airportFromOFP(originRaw),
+    role: "Departure",
+    lat: parseLatLon(firstValue(originRaw.pos_lat, originRaw.lat, originRaw.latitude)),
+    lon: parseLatLon(firstValue(originRaw.pos_long, originRaw.lon, originRaw.longitude)),
+  };
+  const destination = {
+    ...airportFromOFP(destinationRaw),
+    role: "Arrival",
+    lat: parseLatLon(firstValue(destinationRaw.pos_lat, destinationRaw.lat, destinationRaw.latitude)),
+    lon: parseLatLon(firstValue(destinationRaw.pos_long, destinationRaw.lon, destinationRaw.longitude)),
+  };
+
   const aircraft = ofp?.aircraft || {};
   const general = ofp?.general || {};
   const atc = ofp?.atc || {};
@@ -151,13 +332,36 @@ function normalizeSimBriefOFP(ofp) {
   const times = ofp?.times || {};
   const weather = ofp?.weather || {};
   const params = ofp?.params || {};
-  const navlog = toArray(getPath(ofp, "navlog.fix", []));
+
+  const navlog = normalizeNavlog(ofp?.navlog);
+  const alternates = extractAlternates(ofp);
 
   const fuelUnits = firstValue(params.units, "kgs");
-  const callsign = firstValue(atc.callsign, `${firstValue(general.icao_airline, "")}${firstValue(general.flight_number, "")}`);
-  const route = firstValue(atc.route, general.route, getPath(ofp, "general.route"));
-  const cruiseAltitude = firstValue(general.initial_altitude, getPath(atc, "initial_alt"));
-  const flightTime = firstValue(times.est_time_enroute, times.sched_time_enroute);
+  const callsign = firstValue(
+    atc.callsign,
+    general.callsign,
+    `${firstValue(general.icao_airline, "")}${firstValue(general.flight_number, "")}`
+  );
+  const route = firstValue(
+    atc.route,
+    general.route,
+    ofp?.route,
+    getPath(ofp, "atc.flightplan_route")
+  );
+
+  const cruiseAltitude = firstValue(
+    general.initial_altitude,
+    general.cruise_altitude,
+    atc.initial_alt,
+    getPath(atc, "initial_alt"),
+    navlog.find((fix) => String(fix.stage || "").toUpperCase() === "CRZ")?.altitude
+  );
+
+  const flightTime = firstValue(
+    times.est_time_enroute,
+    times.sched_time_enroute,
+    times.enroute_time
+  );
 
   return {
     raw: ofp,
@@ -165,7 +369,8 @@ function normalizeSimBriefOFP(ofp) {
     general,
     origin,
     destination,
-    alternate,
+    alternate: alternates[0] || { icao: "", iata: "", name: "NO ALTERNATE", role: "Alternate" },
+    alternates,
     aircraft,
     atc,
     fuel,
@@ -177,45 +382,53 @@ function normalizeSimBriefOFP(ofp) {
     flightNumber: firstValue(general.flight_number, atc.flight_number),
     airline: firstValue(general.icao_airline, ""),
     callsign,
-    aircraftIcao: firstValue(aircraft.icaocode, aircraft.icao_code),
-    aircraftName: firstValue(aircraft.name, aircraftIcaoFallback(aircraft)),
-    registration: firstValue(aircraft.reg, aircraft.registration),
+    aircraftIcao: firstValue(aircraft.icaocode, aircraft.icao_code, aircraft.icao),
+    aircraftName: firstValue(aircraft.name, aircraft.type, aircraftIcaoFallback(aircraft)),
+    registration: firstValue(aircraft.reg, aircraft.registration, aircraft.registration_number),
     route,
     cruiseAltitude,
-    costIndex: firstValue(general.costindex, general.cost_index, general.cruise_profile),
+    costIndex: firstValue(general.costindex, general.cost_index, general.cruise_profile, general.cost_index_value),
     fuelUnits,
-    tripFuel: firstValue(fuel.enroute_burn, getPath(ofp, "fuel.trip", "")),
-    alternateFuel: firstValue(fuel.alternate_burn, fuel.altn_burn),
-    reserveFuel: firstValue(fuel.reserve),
-    taxiFuel: firstValue(fuel.taxi),
-    contingencyFuel: firstValue(fuel.contingency),
-    etopsFuel: firstValue(fuel.etops),
-    extraFuel: firstValue(fuel.extra),
-    minTakeoffFuel: firstValue(fuel.min_takeoff),
-    takeoffFuel: firstValue(fuel.plan_takeoff, fuel.takeoff),
-    rampFuel: firstValue(fuel.plan_ramp, fuel.ramp),
-    landingFuel: firstValue(fuel.plan_landing, fuel.landing),
-    zfw: firstValue(weights.est_zfw),
-    tow: firstValue(weights.est_tow),
-    ldw: firstValue(weights.est_ldw),
+    tripFuel: firstValue(fuel.enroute_burn, fuel.trip_burn, fuel.trip),
+    alternateFuel: firstValue(fuel.alternate_burn, fuel.altn_burn, fuel.alternate),
+    reserveFuel: firstValue(fuel.reserve, fuel.reserve_fuel),
+    taxiFuel: firstValue(fuel.taxi, fuel.taxi_burn),
+    contingencyFuel: firstValue(fuel.contingency, fuel.cont),
+    etopsFuel: firstValue(fuel.etops, fuel.etops_fuel),
+    extraFuel: firstValue(fuel.extra, fuel.extra_fuel),
+    minTakeoffFuel: firstValue(fuel.min_takeoff, fuel.min_takeoff_fuel, fuel.min_block),
+    takeoffFuel: firstValue(fuel.plan_takeoff, fuel.takeoff, fuel.takeoff_fuel),
+    rampFuel: firstValue(fuel.plan_ramp, fuel.ramp, fuel.ramp_fuel),
+    landingFuel: firstValue(fuel.plan_landing, fuel.landing, fuel.landing_fuel),
+    zfw: firstValue(weights.est_zfw, weights.plan_zfw),
+    tow: firstValue(weights.est_tow, weights.plan_tow),
+    ldw: firstValue(weights.est_ldw, weights.plan_ldw),
     maxZfw: firstValue(weights.max_zfw),
     maxTow: firstValue(weights.max_tow, weights.max_tow_struct),
     maxLdw: firstValue(weights.max_ldw),
     payload: firstValue(weights.payload),
-    pax: firstValue(weights.pax_count),
+    pax: firstValue(weights.pax_count, weights.pax),
     oew: firstValue(weights.oew),
     scheduledOut: firstValue(times.sched_out, times.est_out),
     scheduledOff: firstValue(times.sched_off, times.est_off),
     scheduledOn: firstValue(times.sched_on, times.est_on),
     scheduledIn: firstValue(times.sched_in, times.est_in),
-    tripTime: formatDuration(flightTime),
-    originMetar: firstValue(weather.orig_metar),
-    originTaf: firstValue(weather.orig_taf),
-    destinationMetar: firstValue(weather.dest_metar),
-    destinationTaf: firstValue(weather.dest_taf),
-    alternateMetar: firstValue(weather.altn_metar),
-    alternateTaf: firstValue(weather.altn_taf),
-    pdcText: firstValue(atc.flightplan_text),
+    offBlockTime: firstValue(times.est_out, times.sched_out),
+    takeoffTime: firstValue(times.est_off, times.sched_off),
+    landingTime: firstValue(times.est_on, times.sched_on),
+    onBlockTime: firstValue(times.est_in, times.sched_in),
+    actualOut: firstValue(times.actual_out),
+    actualOff: firstValue(times.actual_off),
+    actualOn: firstValue(times.actual_on),
+    actualIn: firstValue(times.actual_in),
+    tripTime: formatDuration(firstValue(flightTime, 0)),
+    originMetar: firstValue(weather.orig_metar, weather.origin_metar),
+    originTaf: firstValue(weather.orig_taf, weather.origin_taf),
+    destinationMetar: firstValue(weather.dest_metar, weather.destination_metar),
+    destinationTaf: firstValue(weather.dest_taf, weather.destination_taf),
+    alternateMetar: firstValue(weather.altn_metar, weather.alternate_metar),
+    alternateTaf: firstValue(weather.altn_taf, weather.alternate_taf),
+    pdcText: firstValue(atc.flightplan_text, atc.pdc, ofp?.text?.atc),
   };
 }
 
@@ -252,6 +465,7 @@ export default function App() {
     }
   });
   const [copiedClearance, setCopiedClearance] = useState(false);
+  const [checklist, setChecklist] = useState({ status: true, fuel: false, navlog: false, journey: false });
 
   const touchStartX = useRef(null);
 
@@ -268,7 +482,7 @@ export default function App() {
     callsign: "EUR4425",
     aircraftIcao: "A359",
     aircraftName: "Airbus A350-900",
-    registration: "{flight.registration || "-"}",
+    registration: "-",
     route: "BIGGY4 BIGGY COPES MXE BAL",
     cruiseAltitude: "35000",
     costIndex: "30",
@@ -292,6 +506,10 @@ export default function App() {
     oew: "140000",
     scheduledOut: "",
     scheduledIn: "",
+    offBlockTime: "",
+    takeoffTime: "",
+    landingTime: "",
+    onBlockTime: "",
     tripTime: "01:18",
     originMetar: "",
     originTaf: "",
@@ -307,17 +525,41 @@ export default function App() {
   const importedOrigin = flight.origin?.icao || "KEWR";
   const importedDestination = flight.destination?.icao || "KDCA";
   const importedAlternate = flight.alternate?.icao || "KBWI";
-  const headerDepartureTime = formatUtcTime(flight.scheduledOut) === "-" ? "--:--" : formatUtcTime(flight.scheduledOut);
-  const headerArrivalTime = formatUtcTime(flight.scheduledIn) === "-" ? "--:--" : formatUtcTime(flight.scheduledIn);
+  const scheduledDepartureTime = formatTimeOrDash(flight.scheduledOut);
+  const headerDepartureTime = scheduledDepartureTime;
+  const headerArrivalTime = formatTimeOrDash(flight.scheduledIn);
+  const offBlockTime = formatTimeOrDash(flight.offBlockTime || flight.scheduledOut);
+  const takeoffTime = formatTimeOrDash(flight.takeoffTime || flight.scheduledOff);
+  const landingTime = formatTimeOrDash(flight.landingTime || flight.scheduledOn);
+  const onBlockTime = formatTimeOrDash(flight.onBlockTime || flight.scheduledIn);
   const effectiveRoute = flight.route || "No route in OFP";
   const effectiveAircraft = flight.aircraftIcao || flight.aircraftName || "-";
   const effectiveFlight = flight.flightNumber || flight.callsign || "-";
+  const alternateAirports = Array.isArray(flight.alternates)
+    ? flight.alternates
+    : (flight.alternate?.icao ? [flight.alternate] : []);
+  const mapFixes = (flight.navlog || []).map((fix, index) => ({
+    ...fix,
+    ident: firstValue(fix.ident, fix.fix_ident, fix.name, `FIX${index + 1}`),
+    lat: fixLat(fix),
+    lon: fixLon(fix),
+  })).filter((fix) => fix.lat !== null && fix.lon !== null);
 
-  const weatherSelection = {
-    KEWR: { code: importedOrigin, airport: flight.origin, metar: flight.originMetar, taf: flight.originTaf },
-    KDCA: { code: importedDestination, airport: flight.destination, metar: flight.destinationMetar, taf: flight.destinationTaf },
-    ALTN: { code: importedAlternate, airport: flight.alternate, metar: flight.alternateMetar, taf: flight.alternateTaf },
-  }[weatherAirport] || { code: importedOrigin, airport: flight.origin, metar: flight.originMetar, taf: flight.originTaf };
+  const weatherOptions = [
+    { id: "KEWR", code: importedOrigin, airport: flight.origin, metar: flight.originMetar, taf: flight.originTaf },
+    { id: "KDCA", code: importedDestination, airport: flight.destination, metar: flight.destinationMetar, taf: flight.destinationTaf },
+    ...alternateAirports.map((apt, index) => ({
+      id: `ALTN-${index}`,
+      code: apt.icao,
+      airport: apt,
+      metar: index === 0 ? flight.alternateMetar : "",
+      taf: index === 0 ? flight.alternateTaf : "",
+    })),
+  ];
+
+  const weatherSelection =
+    weatherOptions.find((item) => item.id === weatherAirport || item.code === weatherAirport) ||
+    weatherOptions[0];
 
   async function importSimBrief() {
     const user = simbriefInput.trim();
@@ -616,8 +858,8 @@ export default function App() {
                     </div>
                     <div className="grid grid-cols-2 py-2">
                       <div className="border-r border-gray-300 px-2">
-                        <TimeRow label="STD" value={headerDepartureTime} />
-                        <TimeRow label="ETD" value={headerDepartureTime} />
+                        <TimeRow label="STD" value={scheduledDepartureTime} />
+                        <TimeRow label="ETD" value={offBlockTime} />
                       </div>
                       <div className="px-2">
                         <TimeRow label="STA" value={headerArrivalTime} />
@@ -625,6 +867,20 @@ export default function App() {
                       </div>
                     </div>
                     <div className="pb-1 text-center text-[12px] text-gray-500">- CTOT</div>
+                    <div className="mb-2 grid grid-cols-3 gap-2 rounded-md bg-white px-2 py-2 text-center">
+                      <div>
+                        <div className="text-[10px] uppercase text-gray-500">OFF-BLOCK</div>
+                        <div className="text-[13px] font-semibold">{offBlockTime}</div>
+                      </div>
+                      <div className="border-x border-gray-200">
+                        <div className="text-[10px] uppercase text-gray-500">TAKEOFF</div>
+                        <div className="text-[13px] font-semibold">{takeoffTime}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase text-gray-500">ON-BLOCK</div>
+                        <div className="text-[13px] font-semibold">{onBlockTime}</div>
+                      </div>
+                    </div>
                     <button className="mt-2 h-[51px] w-full rounded-md bg-[#0B1E48] text-[16px] font-semibold text-white">
                       Accept Flight
                     </button>
@@ -636,10 +892,31 @@ export default function App() {
                       Flight Checklist
                     </h2>
                     <div className="rounded-md bg-white px-3">
-                      <ChecklistRow label="Status:" value="Final at 09:20" />
-                      <ChecklistRow label="Fuel:" value="Not ordered" />
-                      <ChecklistRow label="NavLog:" value="Pending" />
-                      <ChecklistRow label="Journey Log:" value="Pending" last />
+                      <ChecklistRow
+                        label="Status:"
+                        value={checklist.status ? "Final" : "Pending"}
+                        checked={checklist.status}
+                        onClick={() => setChecklist((value) => ({ ...value, status: !value.status }))}
+                      />
+                      <ChecklistRow
+                        label="Fuel:"
+                        value={checklist.fuel ? "Loaded" : "Not ordered"}
+                        checked={checklist.fuel}
+                        onClick={() => setChecklist((value) => ({ ...value, fuel: !value.fuel }))}
+                      />
+                      <ChecklistRow
+                        label="NavLog:"
+                        value={checklist.navlog ? "Loaded" : "Pending"}
+                        checked={checklist.navlog}
+                        onClick={() => setChecklist((value) => ({ ...value, navlog: !value.navlog }))}
+                      />
+                      <ChecklistRow
+                        label="Journey Log:"
+                        value={checklist.journey ? "Ready" : "Pending"}
+                        checked={checklist.journey}
+                        onClick={() => setChecklist((value) => ({ ...value, journey: !value.journey }))}
+                        last
+                      />
                     </div>
                   </section>
                 </div>
@@ -650,7 +927,7 @@ export default function App() {
                     <h2 className="text-center text-[19px] font-semibold">Route</h2>
                     <div className="mt-2 overflow-hidden rounded-md bg-white">
                       <div className="h-[360px]">
-                        <RoutePreview />
+                        <DynamicRoutePreview flight={flight} />
                       </div>
                       <div className="px-3 py-3">
                         <p className="text-[12px] leading-[1.5]">
@@ -673,10 +950,14 @@ export default function App() {
                 <div>
                   <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
                     <h2 className="text-center text-[19px] font-semibold">Weather</h2>
-                    <AirportTabs selected={weatherAirport} onChange={setWeatherAirport} />
+                    <AirportTabs
+  selected={weatherAirport}
+  onChange={setWeatherAirport}
+  options={weatherOptions.map((item) => ({ id: item.id, label: item.code }))}
+ />
                     <div className="mt-3 overflow-hidden rounded-md bg-white">
                       <div className="border-b border-gray-200 px-3 py-3">
-                        <div className="text-[16px] font-bold">{weatherSelection.airport?.name || "AIRPORT"}</div>
+                        <div className="text-[16px] font-bold">{weatherSelection.airport?.name || weatherSelection.code || "AIRPORT"}</div>
                         <div className="text-[12px] text-gray-500">{weatherSelection.code}</div>
                       </div>
                       <div className="space-y-2 px-3 py-3">
@@ -719,7 +1000,11 @@ export default function App() {
                 <div>
                   <section className="flex h-full flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
                     <h2 className="text-center text-[19px] font-semibold">NOTAM</h2>
-                    <AirportTabs selected={weatherAirport} onChange={setWeatherAirport} />
+                    <AirportTabs
+  selected={weatherAirport}
+  onChange={setWeatherAirport}
+  options={weatherOptions.map((item) => ({ id: item.id, label: item.code }))}
+ />
                     <div className="mt-3 flex-1 overflow-hidden rounded-md bg-white">
                       <div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">
                         RUNWAY
@@ -1070,7 +1355,7 @@ export default function App() {
               
               {/* TOP MAP VIEW */}
               <div className="relative flex-1 bg-[#E8E7E1] overflow-hidden">
-                <RoutePreview />
+                <DynamicRoutePreview flight={flight} />
 
                 <div className="absolute top-[38%] left-[49%] flex flex-col items-center">
                   <MapPin size={26} fill="#7A6899" color="#7A6899" />
@@ -1307,13 +1592,16 @@ export default function App() {
                       {flight.navlog.length > 0 ? (
                         flight.navlog.map((fix, index) => {
                           const ident = firstValue(fix.ident, fix.fix_ident, fix.name, `FIX${index + 1}`);
-                          const altitude = firstValue(fix.altitude_feet, fix.altitude, fix.level, "-");
+                          const altitude = formatAltitude(firstValue(fix.altitude_feet, fix.altitude, fix.level, "-"));
                           const windDir = firstValue(fix.wind_dir, fix.wind_direction, "-");
                           const windSpd = firstValue(fix.wind_spd, fix.wind_speed, "-");
                           const dist = firstValue(fix.distance, fix.distance_nm, "-");
-                          const legTime = firstValue(fix.time_leg, fix.leg_time, "-");
+                          const legTime = formatLegTime(firstValue(fix.time_leg, fix.leg_time, fix.time_leg_seconds, "-"));
                           const fuelRemaining = firstValue(fix.fuel_remaining, fix.fuel_remain, "-");
-                          const eta = formatUtcTime(firstValue(fix.eta, fix.time_total_epoch));
+                          const etaValue = firstValue(fix.eta, fix.time_total_epoch, fix.time_total, "");
+                           const eta = typeof etaValue === "string" && /[T:-]/.test(etaValue)
+                             ? formatUtcTime(etaValue)
+                             : (Number(etaValue) > 1000000000 ? formatUtcTime(etaValue) : "-");
                           return (
                             <tr key={`${ident}-${index}`} className={index === flight.navlog.length - 1 ? "bg-[#F5F5F5] font-semibold" : "hover:bg-gray-50"}>
                               <td className="px-4 py-3 font-semibold">{ident}</td>
@@ -1451,13 +1739,25 @@ function TimeRow({ label, value }) {
   );
 }
 
-function ChecklistRow({ label, value, last }) {
+function ChecklistRow({ label, value, last, checked = false, onClick }) {
   return (
-    <div className={`flex min-h-[51px] items-center gap-3 ${!last ? "border-b border-gray-200" : ""}`}>
-      <span className="h-[20px] w-[20px] shrink-0 rounded-full border-2 border-gray-300 bg-white" />
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex min-h-[51px] w-full items-center gap-3 text-left ${
+        !last ? "border-b border-gray-200" : ""
+      }`}
+    >
+      <span
+        className={`flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-full border-2 ${
+          checked ? "border-[#0B1E48] bg-[#0B1E48]" : "border-gray-300 bg-white"
+        }`}
+      >
+        {checked && <span className="h-[8px] w-[8px] rounded-full bg-white" />}
+      </span>
       <span className="text-[14px] text-gray-500">{label}</span>
       <span className="ml-auto text-[14px] font-semibold">{value}</span>
-    </div>
+    </button>
   );
 }
 
@@ -1479,20 +1779,27 @@ function WeatherRow({ label, value }) {
   );
 }
 
-function AirportTabs({ selected, onChange }) {
+function AirportTabs({ selected, onChange, options }) {
+  const fallback = [
+    { id: "KEWR", label: "KEWR" },
+    { id: "KDCA", label: "KDCA" },
+    { id: "ALTN", label: "ALTN" },
+  ];
+  const items = options?.length ? options.slice(0, 4) : fallback;
+
   return (
-    <div className="mt-3 grid grid-cols-3 overflow-hidden rounded-lg bg-[#D0D0D2]">
-      {airports.map((airport) => {
-        const active = selected === airport;
+    <div className={`mt-3 grid overflow-hidden rounded-lg bg-[#D0D0D2]`} style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+      {items.map((airport) => {
+        const active = selected === airport.id || selected === airport.label;
         return (
           <button
-            key={airport}
-            onClick={() => onChange(airport)}
+            key={airport.id}
+            onClick={() => onChange(airport.id)}
             className={`h-[38px] text-[13px] font-semibold ${
               active ? "m-[2px] rounded-md bg-white shadow-sm" : "text-gray-600"
             }`}
           >
-            {airport}
+            {airport.label}
           </button>
         );
       })}
@@ -1563,7 +1870,87 @@ function FuelLine({ label, time, fuel, bold = false }) {
   );
 }
 
-function RoutePreview() {
+function DynamicRoutePreview({ flight }) {
+  const fixes = (flight?.navlog || [])
+    .map((fix, index) => ({
+      ident: firstValue(fix.ident, fix.fix_ident, fix.name, `FIX${index + 1}`),
+      lat: fixLat(fix),
+      lon: fixLon(fix),
+    }))
+    .filter((fix) => Number.isFinite(fix.lat) && Number.isFinite(fix.lon));
+
+  const airports = [
+    {
+      ident: flight?.origin?.icao,
+      lat: flight?.origin?.lat,
+      lon: flight?.origin?.lon,
+      kind: "origin",
+      label: flight?.origin?.name,
+    },
+    {
+      ident: flight?.destination?.icao,
+      lat: flight?.destination?.lat,
+      lon: flight?.destination?.lon,
+      kind: "destination",
+      label: flight?.destination?.name,
+    },
+    ...(flight?.alternates || []).map((apt) => ({
+      ident: apt.icao,
+      lat: apt.lat,
+      lon: apt.lon,
+      kind: "alternate",
+      label: apt.name,
+    })),
+  ].filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon));
+
+  const all = [...fixes, ...airports];
+  if (!all.length) {
+    return (
+      <div className="relative h-full w-full overflow-hidden bg-[#E8E7E1]">
+        <div className="absolute inset-0 opacity-50" style={{
+          backgroundImage: `
+            linear-gradient(to right, rgba(110,130,110,.3) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(110,130,110,.3) 1px, transparent 1px)
+          `,
+          backgroundSize: "55px 55px",
+        }} />
+        <div className="absolute inset-0 flex items-center justify-center text-[12px] text-gray-500">
+          No detailed position data in this OFP
+        </div>
+      </div>
+    );
+  }
+
+  const lats = all.map((p) => p.lat);
+  const lons = all.map((p) => p.lon);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons);
+  const maxLon = Math.max(...lons);
+
+  const latPad = Math.max((maxLat - minLat) * 0.18, 0.6);
+  const lonPad = Math.max((maxLon - minLon) * 0.18, 0.6);
+  const view = {
+    minLat: minLat - latPad,
+    maxLat: maxLat + latPad,
+    minLon: minLon - lonPad,
+    maxLon: maxLon + lonPad,
+  };
+
+  const project = (lat, lon) => ({
+    x: ((lon - view.minLon) / (view.maxLon - view.minLon)) * 500,
+    y: (1 - (lat - view.minLat) / (view.maxLat - view.minLat)) * 360,
+  });
+
+  const routePoints = fixes.length >= 2
+    ? fixes
+    : airports.filter((p) => p.kind === "origin" || p.kind === "destination");
+
+  const projectedRoute = routePoints.map((p) => project(p.lat, p.lon));
+  const pathD = projectedRoute.length
+    ? projectedRoute.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ")
+    : "";
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#E8E7E1]">
       <div
@@ -1576,52 +1963,73 @@ function RoutePreview() {
           backgroundSize: "55px 55px",
         }}
       />
-      <div className="absolute left-0 right-0 top-[25%] border-t border-[#9BA49B]" />
-      <div className="absolute left-0 right-0 top-[50%] border-t border-[#9BA49B]" />
-      <div className="absolute left-0 right-0 top-[75%] border-t border-[#9BA49B]" />
-
-      <div className="absolute bottom-0 left-[25%] top-0 border-l border-[#9BA49B]" />
-      <div className="absolute bottom-0 left-[50%] top-0 border-l border-[#9BA49B]" />
-      <div className="absolute bottom-0 left-[75%] top-0 border-l border-[#9BA49B]" />
-
-      <div className="absolute -left-[15%] top-[12%] h-[120px] w-[65%] rotate-[12deg] rounded-[50%] border-2 border-[#9EB59A]" />
-      <div className="absolute -right-[15%] top-[40%] h-[250px] w-[55%] rotate-[-18deg] rounded-[50%] border-2 border-[#9EB59A]" />
-      <div className="absolute bottom-[-10%] right-[-5%] h-[55%] w-[30%] rotate-[8deg] rounded-[50%] bg-[#D5E5EA]" />
-
-      <div className="absolute left-[35%] top-[15%] rotate-[-8deg] text-[15px] italic text-[#817968]">
-        PENNSYLVANIA, PA
-      </div>
-      <div className="absolute left-[32%] top-[23%] text-[13px] italic text-[#817968]">
-        Appalachian Mountains
-      </div>
-      <div className="absolute bottom-[22%] left-[45%] text-[13px] italic text-[#817968]">
-        UNITED STATES
-      </div>
-      <div className="absolute bottom-[14%] left-[47%] text-[12px] italic text-[#817968]">
-        MARYLAND, MD
-      </div>
 
       <svg className="absolute inset-0 h-full w-full" viewBox="0 0 500 360" preserveAspectRatio="none">
-        <path d="M360 55 L235 230" fill="none" stroke="#000000" strokeWidth="3.5" />
+        {pathD && (
+          <path
+            d={pathD}
+            fill="none"
+            stroke="#111111"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )}
+
+        {fixes.map((fix, index) => {
+          const point = project(fix.lat, fix.lon);
+          return (
+            <g key={`${fix.ident}-${index}`}>
+              <circle cx={point.x} cy={point.y} r="3.2" fill="#4D6488" />
+            </g>
+          );
+        })}
+
+        {airports.map((airport, index) => {
+          const point = project(airport.lat, airport.lon);
+          const fill =
+            airport.kind === "origin"
+              ? "#65C52D"
+              : airport.kind === "destination"
+                ? "#F2A243"
+                : "#7A6899";
+
+          return (
+            <g key={`${airport.ident}-${index}`}>
+              <circle cx={point.x} cy={point.y} r="10" fill={fill} />
+              <circle cx={point.x} cy={point.y} r="10" fill="none" stroke="white" strokeWidth="2" />
+            </g>
+          );
+        })}
       </svg>
 
-      <div className="absolute right-[24%] top-[8%] flex flex-col items-center">
-        <MapPin size={38} fill="#65C52D" color="#65C52D" />
-        <span className="-mt-1 text-[13px] font-bold text-[#4E9E25]">KEWR</span>
-      </div>
+      {airports.map((airport, index) => {
+        const point = project(airport.lat, airport.lon);
+        const left = `${(point.x / 500) * 100}%`;
+        const top = `${(point.y / 360) * 100}%`;
+        const textColor =
+          airport.kind === "origin"
+            ? "#4E9E25"
+            : airport.kind === "destination"
+              ? "#C77920"
+              : "#675483";
 
-      <div className="absolute bottom-[28%] left-[44%] flex flex-col items-center">
-        <MapPin size={38} fill="#F2A243" color="#F2A243" />
-        <span className="-mt-1 text-[13px] font-bold text-[#C77920]">KDCA</span>
-      </div>
+        return (
+          <div
+            key={`label-${airport.ident}-${index}`}
+            className="absolute -translate-x-1/2 -translate-y-[120%] text-center"
+            style={{ left, top }}
+          >
+            <div className="rounded bg-white/75 px-1.5 py-0.5 text-[11px] font-bold shadow-sm" style={{ color: textColor }}>
+              {airport.ident}
+            </div>
+          </div>
+        );
+      })}
 
-      <span className="absolute left-2 top-[22%] text-[11px] text-gray-500">W78°</span>
-      <span className="absolute left-[38%] top-2 text-[11px] text-gray-500">W76°</span>
-      <span className="absolute right-4 top-[22%] text-[11px] text-gray-500">W72°</span>
-      <span className="absolute left-2 top-[35%] text-[11px] text-gray-500">N40°</span>
-      <span className="absolute left-2 top-[78%] text-[11px] text-gray-500">N38°</span>
-      <span className="absolute right-2 top-[35%] text-[11px] text-gray-500">N40°</span>
-      <span className="absolute right-2 top-[78%] text-[11px] text-gray-500">N38°</span>
+      <div className="absolute bottom-2 left-2 rounded bg-white/80 px-2 py-1 text-[10px] text-gray-600 shadow-sm">
+        {fixes.length ? `${fixes.length} navlog fixes` : "Airport-to-airport route"}
+      </div>
     </div>
   );
 }
