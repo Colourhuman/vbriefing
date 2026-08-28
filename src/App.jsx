@@ -1858,12 +1858,7 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
 
       {view && (
         <svg className="pointer-events-none absolute inset-0 z-[3] h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
-          <g className="lido-grid-lines">
-            {grid.map((line, index) => (
-              <line key={`grid-${line.type}-${line.value}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} stroke="#66756D" strokeWidth="0.55" strokeDasharray="2 5" opacity="0.18" />
-            ))}
-          </g>
-          {path && <path d={path} fill="none" stroke="#050505" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />}
+          {/* UIR boundaries are deliberately rendered BEFORE the route so the flight path always sits on top, exactly like the SimBrief map. */}
           {uirPaths.map((boundary) => (
             <path
               key={boundary.key}
@@ -1877,6 +1872,30 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
               vectorEffect="non-scaling-stroke"
             />
           ))}
+
+          {/* Geographic graticule: full map width/height, with coordinate labels at the map edges. */}
+          <g className="lido-grid-lines">
+            {grid.map((line, index) => (
+              <line key={`grid-${line.type}-${line.value}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} stroke="#66756D" strokeWidth="0.55" strokeDasharray="2 5" opacity="0.18" />
+            ))}
+          </g>
+          <g className="lido-grid-labels" pointerEvents="none">
+            {grid.filter((line) => line.type === "lat").map((line, index) => (
+              <React.Fragment key={`lat-label-${line.value}-${index}`}>
+                <text x="5" y={Math.max(10, Math.min(size.height - 6, line.a.y - 4))} textAnchor="start">{latLabel(line.value)}</text>
+                <text x={Math.max(0, size.width - 5)} y={Math.max(10, Math.min(size.height - 6, line.b.y - 4))} textAnchor="end">{latLabel(line.value)}</text>
+              </React.Fragment>
+            ))}
+            {grid.filter((line) => line.type === "lon").map((line, index) => (
+              <React.Fragment key={`lon-label-${line.value}-${index}`}>
+                <text x={Math.max(5, Math.min(size.width - 5, line.a.x + 4))} y="13" textAnchor="start">{lonLabel(line.value)}</text>
+                <text x={Math.max(5, Math.min(size.width - 5, line.b.x + 4))} y={Math.max(12, size.height - 5)} textAnchor="start">{lonLabel(line.value)}</text>
+              </React.Fragment>
+            ))}
+          </g>
+
+          {/* Route is intentionally the top SVG layer over UIR boundaries and the graticule. */}
+          {path && <path d={path} fill="none" stroke="#050505" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />}
         </svg>
       )}
 
