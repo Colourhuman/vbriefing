@@ -1838,9 +1838,6 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
   }, [view, size.width, size.height]);
 
 
-  const latLabel = (value) => `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}°${value >= 0 ? "N" : "S"}`;
-  const lonLabel = (value) => `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}°${value >= 0 ? "E" : "W"}`;
-
   return (
     <div ref={containerRef} className={`relative h-full w-full overflow-hidden bg-[#E8E8E3] ${compact ? "rounded-md" : ""}`}>
       {tiles.map((tile) => (
@@ -1877,20 +1874,6 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
           <g className="lido-grid-lines">
             {grid.map((line, index) => (
               <line key={`grid-${line.type}-${line.value}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} stroke="#66756D" strokeWidth="0.55" strokeDasharray="2 5" opacity="0.18" />
-            ))}
-          </g>
-          <g className="lido-grid-labels" pointerEvents="none">
-            {grid.filter((line) => line.type === "lat").map((line, index) => (
-              <React.Fragment key={`lat-label-${line.value}-${index}`}>
-                <text x="5" y={Math.max(10, Math.min(size.height - 6, line.a.y - 4))} textAnchor="start">{latLabel(line.value)}</text>
-                <text x={Math.max(0, size.width - 5)} y={Math.max(10, Math.min(size.height - 6, line.b.y - 4))} textAnchor="end">{latLabel(line.value)}</text>
-              </React.Fragment>
-            ))}
-            {grid.filter((line) => line.type === "lon").map((line, index) => (
-              <React.Fragment key={`lon-label-${line.value}-${index}`}>
-                <text x={Math.max(5, Math.min(size.width - 5, line.a.x + 4))} y="13" textAnchor="start">{lonLabel(line.value)}</text>
-                <text x={Math.max(5, Math.min(size.width - 5, line.b.x + 4))} y={Math.max(12, size.height - 5)} textAnchor="start">{lonLabel(line.value)}</text>
-              </React.Fragment>
             ))}
           </g>
 
