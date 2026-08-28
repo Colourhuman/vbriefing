@@ -205,6 +205,11 @@ function normalizeNavlog(ofp) {
       ident: getIdent(fix, `FIX${index + 1}`),
       lat: getLat(fix),
       lon: getLon(fix),
+      fir: firstValue(
+        fix?.fir, fix?.fir_name, fix?.fir_code, fix?.fir_ident,
+        fix?.fir_entry, fix?.fir_exit, fix?.firname, fix?.airspace, fix?.airspace_name
+      ),
+      fir: firstValue(fix?.fir, fix?.fir_name, fix?.fir_code, fix?.fir_ident, fix?.airspace),
     }))
     .filter((fix) => fix.ident || Number.isFinite(fix.lat) || Number.isFinite(fix.lon));
 }
@@ -318,29 +323,61 @@ function normalizeNotams(ofp) {
 function normalizeSigwxCharts(ofp) {
   const result = [];
   const seen = new Set();
+
+  const normalizeUrl = (value, directory = "") => {
+    if (!value) return "";
+    let url = String(value).trim().replace(/&amp;/g, "&");
+    if (!url) return "";
+    if (/^http:\/\//i.test(url)) url = `https://${url.slice(7)}`;
+    if (!/^https?:\/\//i.test(url)) {
+      const base = String(directory || "https://www.simbrief.com/ofp/uads/").replace(/\/$/, "");
+      url = `${base}/${url.replace(/^\/+/, "")}`;
+    }
+    return url;
+  };
+
   const add = (item, directory = "") => {
     if (!item) return;
-    const name = typeof item === "string" ? item : firstValue(item.name, item.title, "");
-    const link = typeof item === "string" ? item : firstValue(item.link, item.url, item.href, "");
-    if (!name && !link) return;
-    if (!/sigwx|significant weather/i.test(`${name} ${link}`)) return;
-    let url = link;
-    if (url && !/^https?:\/\//i.test(url)) url = `${directory || "https://www.simbrief.com/ofp/uads/"}${String(url).replace(/^\/+/, "")}`;
+    const name = typeof item === "string" ? item : firstValue(item.name, item.title, item.label, item.description, "");
+    const link = typeof item === "string" ? item : firstValue(item.link, item.url, item.href, item.src, item.file, "");
+    const combined = `${name} ${link}`;
+    if (!/sig\s*wx|significant\s*weather/i.test(combined)) return;
+    const url = normalizeUrl(link, directory);
     if (!url || seen.has(url)) return;
     seen.add(url);
-    result.push({ name: name || "SIGWX", url });
+    result.push({ name: name || `SIGWX ${result.length + 1}`, url });
   };
 
   const images = ofp?.images || ofp?.image || {};
   const directory = firstValue(images?.directory, ofp?.images?.directory, "https://www.simbrief.com/ofp/uads/");
-  toArray(images?.map).forEach((item) => add(item, directory));
-  toArray(images?.maps).forEach((item) => add(item, directory));
-  recursiveObjectValues(images).forEach((item) => add(item, directory));
 
-  // Some JSON-v2 responses expose the image list deeper in the OFP object.
+  [images?.map, images?.maps, images?.image, images?.images].flatMap(toArray).forEach((item) => add(item, directory));
+  recursiveObjectValues(images).forEach((item) => add(item, directory));
   recursiveObjectValues(ofp).forEach((item) => {
     if (item && typeof item === "object") add(item, directory);
   });
+
+  try {
+    const serialized = JSON.stringify(ofp);
+    const filenameRegex = /([A-Za-z0-9_-]+[_-]SIGWX[^"'\s<>]*\.(?:gif|png|jpe?g|webp))/gi;
+    let match;
+    while ((match = filenameRegex.exec(serialized))) {
+      add({ name: `SIGWX ${result.length + 1}`, link: match[1] }, directory);
+    }
+
+    const absoluteRegex = /(https?:\/\/[^"'\s<>]+SIGWX[^"'\s<>]*)/gi;
+    while ((match = absoluteRegex.exec(serialized))) {
+      add({ name: `SIGWX ${result.length + 1}`, link: match[1] }, directory);
+    }
+
+    const html = String(ofp?.text?.plan_html || ofp?.text?.html || "");
+    const htmlRegex = /(?:src|href)=["']([^"']*(?:SIGWX|SigWx|Sig Wx)[^"']*)["']/gi;
+    while ((match = htmlRegex.exec(html))) {
+      add({ name: `SIGWX ${result.length + 1}`, link: match[1] }, directory);
+    }
+  } catch {
+    // Keep structured results if fallback parsing is unavailable.
+  }
 
   return result;
 }
@@ -593,6 +630,16 @@ function uniqueByCode(list) {
 }
 
 
+
+const MAP_GRID_CSS = `
+.lido-full-grid {
+  background-image: linear-gradient(rgba(82, 98, 91, .16) 1px, transparent 1px), linear-gradient(90deg, rgba(82, 98, 91, .16) 1px, transparent 1px);
+  background-size: 52px 52px;
+  background-position: 0 0, 0 0;
+  opacity: .95;
+}
+`;
+
 const NIGHT_MODE_CSS = `
 [data-night="true"] { background:#171a1e !important; color:#e8eaed !important; }
 [data-night="true"] header,
@@ -634,15 +681,47 @@ const NIGHT_MODE_CSS = `
 [data-night="true"] .night-navlog, [data-night="true"] .night-navlog section { background:#24292f !important; color:#e5e7eb !important; border-color:#3b4149 !important; }
 [data-night="true"] .night-navlog .lido-waypoint, [data-night="true"] .night-navlog .lido-waypoint-main { background:#30353b !important; border-color:#474e57 !important; color:#e5e7eb !important; }
 [data-night="true"] .night-navlog .lido-waypoint-skipped { background:#3a3d41 !important; }
-[data-night="true"] .night-navlog .lido-column-spacer { background:#24292f !important; border-color:#3b4149 !important; }
+[data-night="true"] .night-navlog .lido-column-spacer,
+[data-night="true"] .night-navlog [class*="column"],
+[data-night="true"] .night-navlog [class*="spacer"] { background:#24292f !important; border-color:#3b4149 !important; }
+[data-night="true"] .night-navlog > div,
+[data-night="true"] .night-navlog > div > div,
+[data-night="true"] .night-navlog .bg-white,
+[data-night="true"] .night-navlog [class*="bg-white/"] { background:#24292f !important; }
+[data-night="true"] .night-navlog .bg-white\/30 { background:rgba(255,255,255,.06) !important; }
 [data-night="true"] .night-navlog input { background:#171a1e !important; color:#f2f4f7 !important; border-color:#4a515a !important; }
+[data-night="true"] .night-navlog,
+[data-night="true"] .night-navlog > div,
+[data-night="true"] .night-navlog > div > div,
+[data-night="true"] .night-navlog section,
+[data-night="true"] .night-navlog [class*="bg-white"],
+[data-night="true"] .night-navlog [class*="bg-[#"],
+[data-night="true"] .night-navlog [class*="bg-D"] {
+  background-color:#24292f !important;
+  color:#e5e7eb !important;
+}
+[data-night="true"] .night-navlog [class*="bg-white/30"] { background-color:rgba(255,255,255,.06) !important; }
+[data-night="true"] .night-navlog .text-gray-400,
+[data-night="true"] .night-navlog .text-gray-500,
+[data-night="true"] .night-navlog .text-gray-600 { color:#aeb6bf !important; }
+[data-night="true"] .lido-full-grid {
+  background-image: linear-gradient(rgba(160,170,165,.18) 1px, transparent 1px), linear-gradient(90deg, rgba(160,170,165,.18) 1px, transparent 1px) !important;
+}
 `;
 
-if (typeof document !== "undefined" && !document.getElementById("virtual-lido-night-mode")) {
-  const style = document.createElement("style");
-  style.id = "virtual-lido-night-mode";
-  style.textContent = NIGHT_MODE_CSS;
-  document.head.appendChild(style);
+if (typeof document !== "undefined") {
+  if (!document.getElementById("virtual-lido-map-grid")) {
+    const style = document.createElement("style");
+    style.id = "virtual-lido-map-grid";
+    style.textContent = MAP_GRID_CSS;
+    document.head.appendChild(style);
+  }
+  if (!document.getElementById("virtual-lido-night-mode")) {
+    const style = document.createElement("style");
+    style.id = "virtual-lido-night-mode";
+    style.textContent = NIGHT_MODE_CSS;
+    document.head.appendChild(style);
+  }
 }
 
 const DISPATCHER_NAMES = [
@@ -689,7 +768,13 @@ export default function App() {
   const [dispatcherName] = useState(() => DISPATCHER_NAMES[Math.floor(Math.random() * DISPATCHER_NAMES.length)]);
   const touchStartX = useRef(null);
 
-  const flight = simbriefData || fallbackFlight();
+  const flight = useMemo(() => {
+    const base = simbriefData || fallbackFlight();
+    if ((!base.sigwxCharts || base.sigwxCharts.length === 0) && base.raw) {
+      return { ...base, sigwxCharts: normalizeSigwxCharts(base.raw) };
+    }
+    return base;
+  }, [simbriefData]);
 
   const alternates = useMemo(() => uniqueByCode(flight.alternates || (flight.alternate ? [flight.alternate] : [])), [flight.alternates, flight.alternate]);
   const airportsForWeather = useMemo(
@@ -1564,6 +1649,18 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
     .map((p, index) => `${index === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
     .join(" ");
 
+  const firTransitions = [];
+  let previousFir = "";
+  (navFixes || []).forEach((fix) => {
+    const fir = String(firstValue(fix.fir, fix.fir_name, fix.fir_code, fix.fir_ident, fix.fir_entry, fix.fir_exit, fix.firname, fix.airspace, fix.airspace_name, "")).trim();
+    if (!fir) return;
+    if (fir !== previousFir) {
+      const point = project(fix.lat, fix.lon);
+      if (point) firTransitions.push({ ...point, fir });
+      previousFir = fir;
+    }
+  });
+
   const grid = useMemo(() => {
     if (!view) return [];
     const latSpan = Math.abs(view.bounds.maxLat - view.bounds.minLat);
@@ -1599,15 +1696,26 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
       <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/25" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.08),rgba(235,235,225,.14))]" />
 
+      {/* Full-surface chart grid. This is intentionally independent from the geographic bounds so the grid always covers the complete map, including the margins. */}
+      <div
+        className="pointer-events-none absolute inset-0 z-[2] lido-full-grid"
+        aria-hidden="true"
+      />
+
       {view && (
-        <svg className="pointer-events-none absolute inset-0 z-[2] h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
+        <svg className="pointer-events-none absolute inset-0 z-[3] h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
           <g className="lido-grid-lines">
             {grid.map((line, index) => (
-              <line key={`grid-${line.type}-${line.value}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} stroke="#8A8F94" strokeWidth="0.8" strokeDasharray="2 4" opacity="0.34" />
+              <line key={`grid-${line.type}-${line.value}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} stroke="#66756D" strokeWidth="0.55" strokeDasharray="2 5" opacity="0.18" />
             ))}
           </g>
           {path && <path d={path} fill="none" stroke="#050505" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />}
-          </svg>
+          {firTransitions.map((transition, index) => (
+            <g key={`fir-${transition.fir}-${index}`} transform={`translate(${transition.x} ${transition.y})`}>
+              <circle r="3" fill="#67B95A" stroke="#FFFFFF" strokeWidth="1" />
+            </g>
+          ))}
+        </svg>
       )}
 
       {airportPoints.map((airport) => {
@@ -1646,6 +1754,20 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
                 </span>
               )}
             </div>
+          </div>
+        );
+      })}
+
+      {showLabels && firTransitions.map((transition, index) => {
+        const left = `${Math.max(6, Math.min(94, (transition.x / Math.max(1, size.width)) * 100))}%`;
+        const top = `${Math.max(8, Math.min(92, (transition.y / Math.max(1, size.height)) * 100))}%`;
+        return (
+          <div
+            key={`fir-label-${transition.fir}-${index}`}
+            className="pointer-events-none absolute z-[7] -translate-x-1/2 -translate-y-1/2 rounded-sm border border-[#5AA653]/70 bg-white/85 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-[#4D9948] shadow-sm"
+            style={{ left, top }}
+          >
+            FIR {transition.fir}
           </div>
         );
       })}
@@ -1747,7 +1869,7 @@ function WeatherPanel({ airport, importedMetar, importedTaf, live, loading, char
   const code = airportCode(airport);
   const metar = firstValue(live?.metar, importedMetar, "No METAR available");
   const taf = firstValue(live?.taf, importedTaf, "No TAF available");
-  return <div className="mt-3 overflow-hidden rounded-md bg-white"><div className="border-b border-gray-200 px-3 py-3"><div className="text-[16px] font-bold">{airport?.name || "UNKNOWN AIRPORT"}</div><div className="text-[12px] text-gray-500">{code}</div></div><div className="space-y-2 px-3 py-3"><WeatherRow label="Ceiling:" value="-" /><WeatherRow label="Visibility:" value={weatherVisibility(metar)} /><WeatherRow label="Wind:" value={weatherWind(metar)} /><WeatherRow label="Temperature:" value={weatherTemp(metar)} /></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 flex items-center justify-between text-[12px] text-gray-500"><span>METAR</span><span>{loading ? "updating..." : "current / OFP fallback"}</span></div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{metar}</pre></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 text-[12px] text-gray-500">TAF</div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{taf}</pre></div><button disabled={!charts.length} onClick={onOpenCharts} className="m-3 h-[45px] w-[calc(100%-24px)] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50">{charts.length ? "Significant Weather Charts" : "SIGWX not included in OFP"}</button></div>;
+  return <div className="mt-3 overflow-hidden rounded-md bg-white"><div className="border-b border-gray-200 px-3 py-3"><div className="text-[16px] font-bold">{airport?.name || "UNKNOWN AIRPORT"}</div><div className="text-[12px] text-gray-500">{code}</div></div><div className="space-y-2 px-3 py-3"><WeatherRow label="Ceiling:" value="-" /><WeatherRow label="Visibility:" value={weatherVisibility(metar)} /><WeatherRow label="Wind:" value={weatherWind(metar)} /><WeatherRow label="Temperature:" value={weatherTemp(metar)} /></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 flex items-center justify-between text-[12px] text-gray-500"><span>METAR</span><span>{loading ? "updating..." : "current / OFP fallback"}</span></div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{metar}</pre></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 text-[12px] text-gray-500">TAF</div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{taf}</pre></div><button disabled={!charts.length || !onOpenCharts} onClick={onOpenCharts} className="m-3 h-[45px] w-[calc(100%-24px)] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50">{charts.length ? "Significant Weather Charts" : "SIGWX not included in OFP"}</button></div>;
 }
 
 function FuelSummaryCard({ flight, fuelOrdered }) { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Fuel</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><div className="flex items-center justify-between bg-[#F5F5F5] px-3 py-3"><span className="text-[15px] text-gray-600">Planned Fuel (OFP):</span><strong className="text-[20px]">{flight.rampFuel || flight.takeoffFuel || "-"} kg</strong></div><div className="space-y-1 px-3 py-3"><FuelRow label="Trip Fuel:" value={`${flight.tripFuel || "-"} kg`} /><FuelRow label="Alternate:" value={`${flight.alternateFuel || "-"} kg`} /><FuelRow label="Reserve:" value={`${flight.reserveFuel || "-"} kg`} /><FuelRow label="Taxi:" value={`${flight.taxiFuel || "-"} kg`} /><FuelRow label="Landing:" value={`${flight.landingFuel || "-"} kg`} /></div></div><div className={`mt-3 rounded-md px-3 py-3 text-[13px] font-semibold ${fuelOrdered ? "bg-[#E6F6DA] text-[#17500D]" : "bg-white text-gray-600"}`}>{fuelOrdered ? "Fuel order: ORDERED" : "Fuel order: NOT ORDERED"}</div><button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open Fuel</button></section>; }
