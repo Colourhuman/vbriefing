@@ -583,6 +583,7 @@ export default function App() {
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [fuelOrdered, setFuelOrdered] = useState(() => safeStorageGet(SIMBRIEF_FUEL_ORDER_KEY) === "true");
   const [checklist, setChecklist] = useState({ status: false, fuel: false, navlog: false, journey: false });
+  const [actualTimes, setActualTimes] = useState({});
   const [copiedClearance, setCopiedClearance] = useState(false);
   const [showRouteLabels, setShowRouteLabels] = useState(true);
   const touchStartX = useRef(null);
@@ -722,6 +723,7 @@ export default function App() {
       safeStorageSet(SIMBRIEF_OFP_STORAGE_KEY, JSON.stringify(normalized));
       safeStorageSet(SIMBRIEF_FUEL_ORDER_KEY, "false");
       setChecklist({ status: true, fuel: false, navlog: normalized.navlog?.length > 0, journey: false });
+      setActualTimes({});
       setShowSimBriefModal(false);
       await refreshLiveWeather(normalized);
     } catch (error) {
@@ -768,6 +770,7 @@ export default function App() {
     setFuelOrdered(false);
     setWeatherLive({});
     setChecklist({ status: false, fuel: false, navlog: false, journey: false });
+    setActualTimes({});
     safeStorageSet(SIMBRIEF_OFP_STORAGE_KEY, "");
     safeStorageSet(SIMBRIEF_FUEL_ORDER_KEY, "false");
   }
@@ -1025,286 +1028,13 @@ export default function App() {
         )}
 
         {activeTab === "navlog" && (
-          <div className="h-full overflow-y-auto bg-[#DDE0E3]">
-            <div className="mx-auto max-w-[1180px]">
-
-              {/* Lido-style fuel / reserve strip */}
-              <section className="border-b border-[#C2C5C8] bg-[#F0F1F2] px-5 pt-4">
-                <div className="h-[18px] overflow-hidden rounded-[3px] bg-[#17345F] shadow-inner">
-                  <div className="relative h-full w-full">
-                    <div
-                      className="absolute left-0 top-0 h-full"
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          Math.max(
-                            7,
-                            (toNumber(flight.reserveFuel) /
-                              Math.max(
-                                1,
-                                toNumber(flight.rampFuel || flight.takeoffFuel || flight.reserveFuel)
-                              )) *
-                              100
-                          )
-                        )}%`,
-                        backgroundImage:
-                          "repeating-linear-gradient(-45deg, #C53C48 0px, #C53C48 5px, #18345F 5px, #18345F 10px)",
-                      }}
-                    />
-                    <div
-                      className="absolute top-[-2px] bottom-[-2px] w-[4px] rounded-full bg-[#F0A33A]"
-                      style={{
-                        left: `${Math.min(
-                          98,
-                          Math.max(
-                            3,
-                            (toNumber(flight.reserveFuel) /
-                              Math.max(
-                                1,
-                                toNumber(flight.rampFuel || flight.takeoffFuel || flight.reserveFuel)
-                              )) *
-                              100
-                          )
-                        )}%`,
-                      }}
-                    />
-                    <div
-                      className="absolute top-[-2px] bottom-[-2px] w-[4px] rounded-full bg-[#6FBC41]"
-                      style={{
-                        left: `${Math.min(
-                          99,
-                          Math.max(
-                            5,
-                            ((toNumber(flight.reserveFuel) + toNumber(flight.landingFuel)) /
-                              Math.max(
-                                1,
-                                toNumber(flight.rampFuel || flight.takeoffFuel || flight.reserveFuel)
-                              )) *
-                              100
-                          )
-                        )}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-[11px] font-semibold text-[#374151]">
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#C53C48]" />
-                    FINAL RESERVE {formatNumber(flight.reserveFuel)} kg
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-3 w-[3px] rounded-full bg-[#F0A33A]" />
-                    TOTAL RESERVE {formatNumber(toNumber(flight.reserveFuel) + toNumber(flight.alternateFuel))} kg
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-3 w-[3px] rounded-full bg-[#6FBC41]" />
-                    LANDING {formatNumber(flight.landingFuel)} kg
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-[1.5fr_.65fr_1fr_1fr_1fr_.95fr_1fr] items-end border-t border-[#D1D4D7] pb-2 pt-1 text-[11px] font-semibold text-gray-600">
-                  <span>WPT ({navFixes.length})</span>
-                  <span>DTD (NM)</span>
-                  <span>Pln.Time</span>
-                  <span>Act.Time</span>
-                  <span>Time Delta</span>
-                  <span>MFOB (kg)</span>
-                  <span>AFOB (kg)</span>
-                </div>
+          <div className="h-full overflow-y-auto bg-[#E5E7EB] p-3">
+            <div className="mx-auto max-w-[1400px] space-y-3">
+              <section className="overflow-hidden rounded-xl border border-[#D0D0D0] bg-white">
+                <div className="flex items-center justify-between border-b border-[#D0D0D0] bg-[#F1F1F1] px-5 py-4"><div><h2 className="text-[19px] font-semibold">Navigation Log</h2><p className="mt-1 text-[12px] text-gray-500">{effectiveFlight} · {importedOrigin} → {importedDestination} · {effectiveAircraft}</p></div><div className="text-right text-[12px] text-gray-500">{navFixes.length} fixes</div></div>
+                <div className="overflow-x-auto"><table className="w-full min-w-[1480px] text-left text-[11px]"><thead className="bg-[#E9E9E9] text-[10px] font-semibold uppercase text-gray-600"><tr><th className="px-3 py-3">#</th><th className="px-3 py-3">Waypoint</th><th className="px-3 py-3">Stage</th><th className="px-3 py-3">Altitude</th><th className="px-3 py-3">IAS</th><th className="px-3 py-3">TAS</th><th className="px-3 py-3">Mach</th><th className="px-3 py-3">GS</th><th className="px-3 py-3">Wind</th><th className="px-3 py-3">W/C</th><th className="px-3 py-3">OAT</th><th className="px-3 py-3">Dist</th><th className="px-3 py-3">Leg Time</th><th className="px-3 py-3">Pln. Time</th><th className="px-3 py-3">Act. Time</th><th className="px-3 py-3">Time Delta</th><th className="px-3 py-3">Fuel Leg</th><th className="px-3 py-3">EFOB</th><th className="px-3 py-3">Airway</th></tr></thead><tbody className="divide-y divide-gray-200">{navFixes.length ? navFixes.map((fix, index) => <NavLogRow key={`${fix.ident}-${index}`} fix={fix} index={index} actualTime={actualTimes[index] || ""} onActualTimeChange={(value) => setActualTimes((current) => ({ ...current, [index]: value }))} />) : <tr><td colSpan={19} className="px-5 py-12 text-center text-[13px] text-gray-500">No navigation fixes were returned by SimBrief. Re-import the latest OFP.</td></tr>}</tbody></table></div>
               </section>
-
-              {/* Actual Lido-like waypoint cards */}
-              <div className="space-y-[2px] px-1 pb-24">
-                {navFixes.length ? (
-                  navFixes.map((fix, index) => {
-                    const ident = getIdent(fix, `FIX${index + 1}`);
-                    const skipped =
-                      String(ident).startsWith("(") ||
-                      String(ident).toUpperCase().includes("AB_");
-                    const plannedTime = firstValue(
-                      fix.time_total,
-                      fix.time,
-                      fix.eta,
-                      fix.ete,
-                      ""
-                    );
-                    const mFOB = firstValue(
-                      fix.fuel_plan_onboard,
-                      fix.fuel_remaining,
-                      fix.fob,
-                      fix.efob,
-                      ""
-                    );
-                    const airway = firstValue(
-                      fix.via_airway,
-                      fix.airway,
-                      fix.airway_name,
-                      "DCT"
-                    );
-                    const dist = firstValue(
-                      fix.distance_to_dest,
-                      fix.dtd,
-                      fix.distance,
-                      fix.distance_nm,
-                      "-"
-                    );
-                    const dtw = firstValue(
-                      fix.distance_to_go,
-                      fix.dtw,
-                      fix.dist_to_go,
-                      ""
-                    );
-                    const msa = firstValue(
-                      fix.msa,
-                      fix.minimum_safe_altitude,
-                      "-"
-                    );
-                    const gs = firstValue(
-                      fix.groundspeed,
-                      fix.gs,
-                      "-"
-                    );
-                    const tas = firstValue(
-                      fix.true_airspeed,
-                      fix.tas,
-                      "-"
-                    );
-                    const ias = firstValue(
-                      fix.ind_airspeed,
-                      fix.ias,
-                      "-"
-                    );
-                    const mach = firstValue(fix.mach, "-");
-                    const oat = firstValue(
-                      fix.oat,
-                      fix.temperature,
-                      fix.temp,
-                      fix.oat_temp,
-                      "-"
-                    );
-                    const coordLat = fix.lat;
-                    const coordLon = fix.lon;
-                    const wind = fixWind(fix);
-                    const stage = firstValue(fix.stage, fix.phase, "");
-                    const legTime = formatNavTime(
-                      firstValue(fix.time_leg, fix.leg_time, fix.ete, "")
-                    );
-
-                    return (
-                      <div
-                        key={`${ident}-${index}`}
-                        className={`overflow-hidden rounded-[4px] border border-[#C5C8CB] shadow-[0_1px_2px_rgba(0,0,0,.12)] ${
-                          skipped ? "bg-[#B9BBBE]" : "bg-[#D5D7D9]"
-                        }`}
-                      >
-                        {/* Main waypoint line */}
-                        <div className="relative grid min-h-[72px] grid-cols-[1.5fr_.65fr_1fr_1fr_1fr_.95fr_1fr_auto] items-center gap-2 px-3 py-2">
-                          <div
-                            className={`absolute left-0 top-0 bottom-0 w-[5px] ${
-                              index === 0 ? "bg-[#294D89]" : "bg-transparent"
-                            }`}
-                          />
-                          <div className="pl-2">
-                            <div className="text-[26px] leading-none font-semibold tracking-tight text-[#1B2430]">
-                              {ident}
-                            </div>
-                            {stage && (
-                              <div className="mt-1 text-[10px] font-semibold uppercase text-gray-500">
-                                {stage}
-                              </div>
-                            )}
-                          </div>
-                          <div className="text-[14px] font-medium text-[#303942]">{dist}</div>
-                          <div className="text-[15px] font-medium">
-                            {formatNavTime(plannedTime)}
-                            <div className="mt-[2px] w-fit border-b-2 border-dotted border-[#667085] text-[9px] text-transparent">
-                              --
-                            </div>
-                          </div>
-                          <div>
-                            <div className="h-[46px] rounded-md bg-white/85" />
-                          </div>
-                          <div>
-                            <div className="h-[46px] rounded-md bg-white/30 px-2 text-center pt-3 text-[12px] text-gray-500">
-                              --
-                            </div>
-                          </div>
-                          <div className="text-[15px] font-medium">{formatNumber(mFOB)}</div>
-                          <div>
-                            <div className="h-[46px] rounded-md bg-white/85" />
-                          </div>
-                          <div className="pr-1 text-[18px] text-gray-500">✈</div>
-                        </div>
-
-                        {/* Route / airway strip */}
-                        <div className="grid grid-cols-4 gap-2 border-y border-[#C4C6C9] bg-[#E9EAEB] px-3 py-[4px] text-[11px] font-semibold text-[#333B44]">
-                          <span className="pl-2">{airway}</span>
-                          <span>{firstValue(fix.wind_component, fix.wc, `${wind}`)}</span>
-                          <span>DTW {dtw || "-"}</span>
-                          <span>FL {fixAltitude(fix).replace("FL", "")} &nbsp; MSA {String(msa).replace("FL", "")}</span>
-                        </div>
-
-                        {/* Expanded details — matches the reference's dense data band */}
-                        <div className="grid grid-cols-3 gap-y-1 px-4 py-2 text-[11px] text-[#4A5561]">
-                          <div>
-                            Coordinate{" "}
-                            <strong className="text-[#333B44]">
-                              {Number.isFinite(coordLat) && Number.isFinite(coordLon)
-                                ? `${coordLat.toFixed(2)} / ${coordLon.toFixed(2)}`
-                                : "-"}
-                            </strong>
-                          </div>
-                          <div>
-                            OAT <strong className="text-[#333B44]">{oat === "-" ? "-" : `${oat} °C`}</strong>
-                          </div>
-                          <div>
-                            Wind <strong className="text-[#333B44]">{wind}</strong>
-                          </div>
-                          <div>
-                            Windshear Rate <strong className="text-[#333B44]">{firstValue(fix.windshear_rate, "NA")}</strong>
-                          </div>
-                          <div>
-                            GS/TAS <strong className="text-[#333B44]">{gs}/{tas}</strong>
-                          </div>
-                          <div>
-                            IAS/Mach <strong className="text-[#333B44]">{ias}/{mach}</strong>
-                          </div>
-                          <div className="col-span-3 flex justify-between border-t border-[#C9CDD1] pt-1 text-[10px] text-gray-500">
-                            <span>Leg {legTime}</span>
-                            <span>Total {formatNavTime(firstValue(fix.time_total, fix.time, fix.total_time, ""))}</span>
-                            <span>Fuel delta {firstValue(fix.fuel_leg, fix.fuel, "-")}</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="rounded-md border border-[#C9CDD1] bg-white px-5 py-12 text-center text-[13px] text-gray-500">
-                    No navigation fixes were returned by SimBrief. Re-import the latest OFP.
-                  </div>
-                )}
-
-                {/* Bottom controls, matching the reference */}
-                <div className="mt-2 overflow-hidden rounded-md border border-[#C4C7CA] bg-[#D5D7D9]">
-                  <div className="flex items-center justify-center border-b border-[#C3C6C9] bg-[#E8E9EA] py-2 text-[12px] font-semibold text-[#30363D]">
-                    ▴ Hide skipped waypoints (
-                    {navFixes.filter((fix) => {
-                      const id = getIdent(fix, "");
-                      return String(id).startsWith("(") || String(id).toUpperCase().includes("AB_");
-                    }).length}
-                    )
-                  </div>
-                  <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto_auto] gap-2 p-2">
-                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">N000 00.0</div>
-                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">E000 00.0</div>
-                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">00:00</div>
-                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">000000</div>
-                    <button className="rounded-full bg-white/35 px-3 text-gray-400">−</button>
-                    <button className="rounded-full bg-white/35 px-3 text-gray-400">+</button>
-                  </div>
-                </div>
-              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4"><InfoPanel title="Route"><div className="break-words text-[12px] leading-6 text-gray-700">{effectiveRouteText(importedOrigin, flight.route, importedDestination)}</div></InfoPanel><InfoPanel title="Trip"><InfoRow label="Ground Distance" value={`${flight.groundDistance || "-"} NM`} /><InfoRow label="Air Distance" value={`${flight.airDistance || "-"} NM`} /><InfoRow label="Trip Time" value={flight.tripTime} /></InfoPanel><InfoPanel title="Times"><InfoRow label="Off-block" value={formatTime(flight.estimatedOut)} /><InfoRow label="Takeoff" value={formatTime(flight.estimatedOff)} /><InfoRow label="Landing" value={formatTime(flight.estimatedOn)} /><InfoRow label="On-block" value={formatTime(flight.estimatedIn)} /></InfoPanel><InfoPanel title="Fuel"><InfoRow label="Trip Fuel" value={flight.tripFuel || "-"} /><InfoRow label="Block Fuel" value={flight.rampFuel || flight.takeoffFuel || "-"} /><InfoRow label="Landing Fuel" value={flight.landingFuel || "-"} /></InfoPanel></div>
             </div>
           </div>
         )}
@@ -1335,6 +1065,10 @@ function ChecklistCard({ checklist, onToggle, fuelOrdered, navlogLoaded }) {
 }
 
 function DynamicMap({ flight, navFixes, airports, compact = false, showLabels = true, onToggleLabels }) {
+  return <SlippyRouteMap flight={flight} navFixes={navFixes} airports={airports} compact={compact} showLabels={showLabels} onToggleLabels={onToggleLabels} />;
+}
+
+function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onToggleLabels }) {
   const containerRef = useRef(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -1348,35 +1082,15 @@ function DynamicMap({ flight, navFixes, airports, compact = false, showLabels = 
     return () => observer.disconnect();
   }, []);
 
-  const routeGeoPoints = useMemo(() => {
-    const fixes = (navFixes || []).filter(
-      (f) => Number.isFinite(f.lat) && Number.isFinite(f.lon)
-    );
-
-    const origin = flight?.origin;
-    const destination = flight?.destination;
-
-    return [
-      ...(Number.isFinite(origin?.lat) && Number.isFinite(origin?.lon) ? [origin] : []),
-      ...fixes,
-      ...(Number.isFinite(destination?.lat) && Number.isFinite(destination?.lon)
-        ? [destination]
-        : []),
-    ];
-  }, [flight?.origin, flight?.destination, navFixes]);
-
   const geoPoints = useMemo(() => {
-    const apts = (airports || []).filter(
-      (a) => Number.isFinite(a.lat) && Number.isFinite(a.lon)
-    );
-    const points = [...routeGeoPoints, ...apts];
-    return points.length ? points : routeGeoPoints;
-  }, [routeGeoPoints, airports]);
+    const fixes = (navFixes || []).filter((f) => Number.isFinite(f.lat) && Number.isFinite(f.lon));
+    const apts = (airports || []).filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon));
+    const base = [...fixes, ...apts];
+    if (base.length) return base;
+    return [flight?.origin, flight?.destination].filter((p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lon));
+  }, [navFixes, airports, flight]);
 
-  const view = useMemo(
-    () => fitMapView(geoPoints, size.width, size.height),
-    [geoPoints, size.width, size.height]
-  );
+  const view = useMemo(() => fitMapView(geoPoints, size.width, size.height), [geoPoints, size.width, size.height]);
 
   const tiles = useMemo(() => {
     if (!view || !size.width || !size.height) return [];
@@ -1386,352 +1100,157 @@ function DynamicMap({ flight, navFixes, airports, compact = false, showLabels = 
   const project = (lat, lon) => {
     if (!view) return null;
     const p = geoToWorld(lat, lon, view.zoom);
-    return {
-      x: p.x - view.topLeft.x,
-      y: p.y - view.topLeft.y,
-    };
+    return { x: p.x - view.topLeft.x, y: p.y - view.topLeft.y };
   };
 
-  const projectedRoute = routeGeoPoints
-    .map((point) => project(point.lat, point.lon))
+  const routePoints = (navFixes || [])
+    .filter((f) => Number.isFinite(f.lat) && Number.isFinite(f.lon))
+    .map((f) => project(f.lat, f.lon))
     .filter(Boolean);
-
-  const path = projectedRoute
-    .map(
-      (point, index) =>
-        `${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`
-    )
-    .join(" ");
-
-  const gridLines = useMemo(() => {
-    if (!view || !size.width || !size.height) return [];
-    const latSpan = view.bounds.maxLat - view.bounds.minLat;
-    const lonSpan = view.bounds.maxLon - view.bounds.minLon;
-    const latStep = latSpan > 8 ? 2 : latSpan > 4 ? 1 : latSpan > 1.5 ? 0.5 : 0.25;
-    const lonStep = lonSpan > 12 ? 2 : lonSpan > 6 ? 1 : lonSpan > 3 ? 0.5 : 0.25;
-
-    const latStart = Math.floor(view.bounds.minLat / latStep) * latStep;
-    const lonStart = Math.floor(view.bounds.minLon / lonStep) * lonStep;
-    const items = [];
-
-    for (let lat = latStart; lat <= view.bounds.maxLat + latStep; lat += latStep) {
-      const p1 = project(lat, view.bounds.minLon);
-      const p2 = project(lat, view.bounds.maxLon);
-      if (p1 && p2) items.push({ type: "lat", value: lat, p1, p2 });
-    }
-
-    for (let lon = lonStart; lon <= view.bounds.maxLon + lonStep; lon += lonStep) {
-      const p1 = project(view.bounds.minLat, lon);
-      const p2 = project(view.bounds.maxLat, lon);
-      if (p1 && p2) items.push({ type: "lon", value: lon, p1, p2 });
-    }
-    return items;
-  }, [view, size.width, size.height]);
-
-  const routeArrows = useMemo(() => {
-    if (projectedRoute.length < 2) return [];
-    const result = [];
-    let distanceSinceArrow = 72;
-
-    for (let i = 1; i < projectedRoute.length; i += 1) {
-      const a = projectedRoute[i - 1];
-      const b = projectedRoute[i];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const segmentLength = Math.hypot(dx, dy);
-      if (!segmentLength) continue;
-
-      let consumed = 0;
-      while (distanceSinceArrow + consumed <= segmentLength) {
-        const dist = distanceSinceArrow + consumed;
-        const t = dist / segmentLength;
-        const x = a.x + dx * t;
-        const y = a.y + dy * t;
-        const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-        result.push({ x, y, angle });
-        consumed += 86;
-      }
-
-      distanceSinceArrow = segmentLength - Math.max(0, consumed - 86);
-      if (distanceSinceArrow <= 0) distanceSinceArrow = 86;
-    }
-
-    return result;
-  }, [projectedRoute]);
 
   const airportPoints = (airports || [])
     .filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon))
-    .map((airport) => {
-      const point = project(airport.lat, airport.lon);
-      return point ? { ...airport, point } : null;
+    .map((a) => {
+      const p = project(a.lat, a.lon);
+      return p ? { ...a, point: p } : null;
     })
     .filter(Boolean);
 
-  const latLabel = (value) =>
-    `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}°${value >= 0 ? "N" : "S"}`;
+  const fallbackRoute = [flight?.origin, flight?.destination]
+    .filter((p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lon))
+    .map((p) => project(p.lat, p.lon))
+    .filter(Boolean);
 
-  const lonLabel = (value) =>
-    `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}°${value >= 0 ? "E" : "W"}`;
+  const pointsForRoute = routePoints.length >= 2 ? routePoints : fallbackRoute;
+  const path = pointsForRoute
+    .map((p, index) => `${index === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
+    .join(" ");
+
+  const grid = useMemo(() => {
+    if (!view) return [];
+    const latSpan = Math.abs(view.bounds.maxLat - view.bounds.minLat);
+    const lonSpan = Math.abs(view.bounds.maxLon - view.bounds.minLon);
+    const latStep = latSpan > 12 ? 2 : latSpan > 6 ? 1 : latSpan > 3 ? 0.5 : latSpan > 1 ? 0.25 : 0.1;
+    const lonStep = lonSpan > 16 ? 2 : lonSpan > 8 ? 1 : lonSpan > 4 ? 0.5 : lonSpan > 1.5 ? 0.25 : 0.1;
+    const lines = [];
+    const startLat = Math.floor(view.bounds.minLat / latStep) * latStep;
+    const startLon = Math.floor(view.bounds.minLon / lonStep) * lonStep;
+    for (let lat = startLat; lat <= view.bounds.maxLat + latStep; lat += latStep) {
+      const a = project(lat, view.bounds.minLon);
+      const b = project(lat, view.bounds.maxLon);
+      if (a && b) lines.push({ type: "lat", value: Number(lat.toFixed(4)), a, b });
+    }
+    for (let lon = startLon; lon <= view.bounds.maxLon + lonStep; lon += lonStep) {
+      const a = project(view.bounds.minLat, lon);
+      const b = project(view.bounds.maxLat, lon);
+      if (a && b) lines.push({ type: "lon", value: Number(lon.toFixed(4)), a, b });
+    }
+    return lines;
+  }, [view, size.width, size.height]);
+
+  const arrows = useMemo(() => {
+    if (pointsForRoute.length < 2) return [];
+    const result = [];
+    const interval = compact ? 115 : 145;
+    let carry = interval * 0.35;
+    for (let i = 1; i < pointsForRoute.length; i += 1) {
+      const a = pointsForRoute[i - 1];
+      const b = pointsForRoute[i];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 4) continue;
+      const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+      let distance = carry;
+      while (distance < len) {
+        const t = distance / len;
+        result.push({ x: a.x + dx * t, y: a.y + dy * t, angle });
+        distance += interval;
+      }
+      carry = Math.max(20, distance - len);
+    }
+    return result;
+  }, [pointsForRoute, compact]);
+
+  const latLabel = (value) => `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}°${value >= 0 ? "N" : "S"}`;
+  const lonLabel = (value) => `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}°${value >= 0 ? "E" : "W"}`;
 
   return (
-    <div
-      ref={containerRef}
-      className={`relative h-full w-full overflow-hidden bg-[#E9E9E4] ${
-        compact ? "rounded-md" : ""
-      }`}
-    >
-      {/* Real map tiles underneath everything */}
+    <div ref={containerRef} className={`relative h-full w-full overflow-hidden bg-[#E8E8E3] ${compact ? "rounded-md" : ""}`}>
       {tiles.map((tile) => (
-        <img
-          key={`${tile.x}-${tile.y}-${tile.z}`}
-          src={tile.url}
-          alt=""
-          className="pointer-events-none absolute select-none"
-          style={{
-            left: tile.left,
-            top: tile.top,
-            width: 256,
-            height: 256,
-            opacity: 0.78,
-          }}
-          draggable={false}
-          loading="eager"
-        />
+        <img key={`${tile.x}-${tile.y}-${tile.z}`} src={tile.url} alt="" className="pointer-events-none absolute select-none" style={{ left: tile.left, top: tile.top, width: 256, height: 256, opacity: 0.92 }} draggable={false} loading="eager" />
       ))}
 
-      {/* Lido-like washed/light chart treatment */}
-      <div className="absolute inset-0 bg-[#F4F3ED]/35" />
+      <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/28" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.10),rgba(235,235,225,.18))]" />
 
-      {/* Navigation grid */}
       {view && (
-        <svg
-          className="pointer-events-none absolute inset-0 h-full w-full"
-          viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`}
-          preserveAspectRatio="none"
-        >
-          <g stroke="#7E9186" strokeWidth="0.65" opacity="0.32">
-            {gridLines.map((line, index) => (
-              <line
-                key={`${line.type}-${index}`}
-                x1={line.p1.x}
-                y1={line.p1.y}
-                x2={line.p2.x}
-                y2={line.p2.y}
-              />
-            ))}
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
+          <g stroke="#6F8177" strokeWidth="0.65" opacity="0.36">
+            {grid.map((line, index) => <line key={`${line.type}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} />)}
           </g>
-
-          {/* Coordinate labels */}
-          <g
-            fill="#66736C"
-            fontSize="10"
-            fontFamily="Arial, sans-serif"
-            opacity="0.82"
-          >
-            {gridLines
-              .filter((line) => line.type === "lat")
-              .map((line, index) => (
-                <text
-                  key={`lat-label-${index}`}
-                  x="7"
-                  y={Math.max(12, Math.min(size.height - 4, line.p1.y - 3))}
-                >
-                  {latLabel(line.value)}
-                </text>
-              ))}
-            {gridLines
-              .filter((line) => line.type === "lon")
-              .map((line, index) => (
-                <text
-                  key={`lon-label-${index}`}
-                  x={Math.max(4, Math.min(size.width - 44, line.p1.x + 3))}
-                  y="13"
-                >
-                  {lonLabel(line.value)}
-                </text>
-              ))}
+          <g fill="#627168" fontSize="9" fontFamily="Arial, sans-serif" opacity="0.88">
+            {grid.filter((l) => l.type === "lat").map((line, index) => <text key={`lat-${index}`} x="5" y={Math.max(11, Math.min(size.height - 5, line.a.y - 2))}>{latLabel(line.value)}</text>)}
+            {grid.filter((l) => l.type === "lon").map((line, index) => <text key={`lon-${index}`} x={Math.max(4, Math.min(size.width - 42, line.a.x + 3))} y="12">{lonLabel(line.value)}</text>)}
           </g>
         </svg>
       )}
 
-      {/* Route */}
       {view && path && (
-        <svg
-          className="pointer-events-none absolute inset-0 h-full w-full"
-          viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`}
-          preserveAspectRatio="none"
-        >
-          <path
-            d={path}
-            fill="none"
-            stroke="#FFFFFF"
-            strokeWidth="6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity="0.95"
-          />
-          <path
-            d={path}
-            fill="none"
-            stroke="#151515"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-
-          {/* Small orange / white direction arrows */}
-          {routeArrows.map((arrow, index) => (
-            <g
-              key={`route-arrow-${index}`}
-              transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`}
-            >
-              <polygon
-                points="-9,-5 6,0 -9,5 -5,0"
-                fill="#F09B38"
-                stroke="#FFFFFF"
-                strokeWidth="2"
-              />
-              <polygon
-                points="-4,-2 4,0 -4,2 -2,0"
-                fill="#FFFFFF"
-              />
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
+          <path d={path} fill="none" stroke="white" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" opacity="0.75" />
+          <path d={path} fill="none" stroke="#151515" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+          {arrows.map((arrow, index) => (
+            <g key={`arrow-${index}`} transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`}>
+              <path d="M -8 -5 L 8 0 L -8 5 L -4 0 Z" fill="#F09A36" stroke="white" strokeWidth="1.8" strokeLinejoin="round" />
+              <path d="M -4 -2.4 L 4 0 L -4 2.4 Z" fill="white" />
             </g>
           ))}
         </svg>
       )}
 
-      {/* Airports: clean Lido markers, no waypoint dots */}
-      {airportPoints.map((airport, index) => {
-        const color =
-          airport.color === "green"
-            ? "#65C529"
-            : airport.color === "orange"
-              ? "#F0A040"
-              : "#D28745";
-
-        const isPrimary =
-          airport.color === "green" || airport.color === "orange";
-
+      {airportPoints.map((airport) => {
+        const fill = airport.color === "green" ? "#65C52D" : airport.color === "orange" ? "#F2A243" : "#7B6494";
         return (
-          <div
-            key={`${airport.kind}-${airport.label}-${index}`}
-            className="absolute -translate-x-1/2 -translate-y-1/2"
-            style={{
-              left: airport.point.x,
-              top: airport.point.y,
-              zIndex: 25,
-            }}
-          >
-            <div className="relative flex flex-col items-center">
-              <div
-                className={`flex items-center justify-center rounded-full border-2 border-white shadow-[0_1px_4px_rgba(0,0,0,.35)] ${
-                  isPrimary ? "h-8 w-8" : "h-6 w-6"
-                }`}
-                style={{ backgroundColor: color }}
-              >
-                {isPrimary && (
-                  <div className="h-2.5 w-2.5 rounded-full border border-white/90 bg-white/20" />
-                )}
-              </div>
-              {showLabels && (
-                <div
-                  className="mt-[-1px] rounded-[2px] bg-white/92 px-1.5 py-[2px] text-[10px] font-bold shadow-[0_1px_2px_rgba(0,0,0,.2)]"
-                  style={{ color }}
-                >
-                  {airport.label}
-                </div>
-              )}
+          <div key={`${airport.kind}-${airport.label}`} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: airport.point.x, top: airport.point.y }}>
+            <div className="flex flex-col items-center">
+              <MapPin size={31} fill={fill} color={fill} strokeWidth={1.4} />
+              {showLabels && <span className="-mt-1 rounded bg-white/88 px-1 py-0.5 text-[9px] font-bold shadow-sm" style={{ color: fill }}>{airport.label}</span>}
             </div>
           </div>
         );
       })}
 
-      {/* Geography-like labels / chart chrome */}
-      {view && (
-        <>
-          <div className="pointer-events-none absolute left-[38%] top-[18%] rotate-[-7deg] text-[13px] italic tracking-wide text-[#7F8178]/65">
-            {importedMapRegion(flight)}
-          </div>
-          <div className="pointer-events-none absolute bottom-[17%] left-[42%] text-[11px] italic text-[#7F8178]/60">
-            ENROUTE
-          </div>
-        </>
-      )}
-
-      {showLabels && (
-        <div className="absolute left-2 top-2 rounded-[3px] bg-white/88 px-2 py-1 text-[10px] font-semibold text-gray-600 shadow">
-          {compact ? "ROUTE" : "ENROUTE MAP"}
-        </div>
-      )}
-
-      {onToggleLabels && (
-        <button
-          onClick={onToggleLabels}
-          className="absolute right-2 top-2 rounded-[3px] bg-white/90 px-2 py-1 text-[10px] font-semibold text-gray-600 shadow"
-        >
-          {showLabels ? "Hide labels" : "Show labels"}
-        </button>
-      )}
-
-      {!compact && (
-        <div className="absolute bottom-2 right-2 rounded-[3px] bg-white/88 px-2 py-1 text-[9px] text-gray-500 shadow">
-          © OpenStreetMap contributors
-        </div>
-      )}
+      {showLabels && <div className="absolute left-2 top-2 rounded-sm bg-white/88 px-2 py-1 text-[9px] font-semibold text-gray-600 shadow-sm">ENROUTE</div>}
+      {onToggleLabels && <button onClick={onToggleLabels} className="absolute right-2 top-2 z-10 rounded-sm bg-white/88 px-2 py-1 text-[9px] font-semibold text-gray-600 shadow-sm">{showLabels ? "Hide" : "Show"}</button>}
+      <div className="absolute bottom-1 right-1 rounded bg-white/82 px-1.5 py-0.5 text-[8px] text-gray-500">© OpenStreetMap contributors</div>
     </div>
   );
-}
-
-function importedMapRegion(flight) {
-  const route = String(flight?.route || "").toUpperCase();
-  if (route.includes("EDDL") || route.includes("EDDF")) return "GERMANY";
-  return "ENROUTE";
 }
 
 function fitMapView(points, width, height) {
   if (!points.length || !width || !height) return null;
   const lats = points.map((p) => p.lat);
   const lons = points.map((p) => p.lon);
-
   let minLat = Math.min(...lats);
   let maxLat = Math.max(...lats);
   let minLon = Math.min(...lons);
   let maxLon = Math.max(...lons);
-
-  if (Math.abs(maxLat - minLat) < 0.25) {
-    minLat -= 0.12;
-    maxLat += 0.12;
-  }
-  if (Math.abs(maxLon - minLon) < 0.4) {
-    minLon -= 0.2;
-    maxLon += 0.2;
-  }
-
-  const zoom = Math.max(
-    2,
-    Math.min(12, chooseZoom(minLat, maxLat, minLon, maxLon, width, height))
-  );
-
+  if (Math.abs(maxLat - minLat) < 0.25) { minLat -= 0.12; maxLat += 0.12; }
+  if (Math.abs(maxLon - minLon) < 0.4) { minLon -= 0.2; maxLon += 0.2; }
+  const zoom = Math.max(2, Math.min(14, chooseZoom(minLat, maxLat, minLon, maxLon, width * 0.88, height * 0.88)));
   const centerLat = (minLat + maxLat) / 2;
   const centerLon = (minLon + maxLon) / 2;
   const center = geoToWorld(centerLat, centerLon, zoom);
-
-  return {
-    zoom,
-    bounds: { minLat, maxLat, minLon, maxLon },
-    topLeft: {
-      x: center.x - width / 2,
-      y: center.y - height / 2,
-    },
-  };
+  return { zoom, bounds: { minLat, maxLat, minLon, maxLon }, topLeft: { x: center.x - width / 2, y: center.y - height / 2 } };
 }
 
 function chooseZoom(minLat, maxLat, minLon, maxLon, width, height) {
-  for (let z = 12; z >= 2; z -= 1) {
+  for (let z = 14; z >= 2; z -= 1) {
     const a = geoToWorld(maxLat, minLon, z);
     const b = geoToWorld(minLat, maxLon, z);
-    const spanX = Math.abs(b.x - a.x) * 1.2;
-    const spanY = Math.abs(b.y - a.y) * 1.2;
+    const spanX = Math.abs(b.x - a.x) * 1.12;
+    const spanY = Math.abs(b.y - a.y) * 1.12;
     if (spanX <= width && spanY <= height) return z;
   }
   return 2;
@@ -1742,8 +1261,7 @@ function geoToWorld(lat, lon, zoom) {
   const clampedLat = Math.max(-85.05112878, Math.min(85.05112878, lat));
   const x = ((lon + 180) / 360) * size;
   const sin = Math.sin((clampedLat * Math.PI) / 180);
-  const y =
-    (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size;
+  const y = (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size;
   return { x, y };
 }
 
@@ -1754,33 +1272,14 @@ function makeTiles(zoom, bounds, width, height) {
   const maxX = Math.floor(se.x / 256);
   const minY = Math.floor(nw.y / 256);
   const maxY = Math.floor(se.y / 256);
-  const center = geoToWorld(
-    (bounds.minLat + bounds.maxLat) / 2,
-    (bounds.minLon + bounds.maxLon) / 2,
-    zoom
-  );
-  const topLeft = {
-    x: center.x - width / 2,
-    y: center.y - height / 2,
-  };
+  const center = geoToWorld((bounds.minLat + bounds.maxLat) / 2, (bounds.minLon + bounds.maxLon) / 2, zoom);
+  const topLeft = { x: center.x - width / 2, y: center.y - height / 2 };
   const tiles = [];
   const tileCount = 2 ** zoom;
-
-  for (
-    let y = Math.max(0, minY - 1);
-    y <= Math.min(tileCount - 1, maxY + 1);
-    y += 1
-  ) {
+  for (let y = Math.max(0, minY - 1); y <= Math.min(tileCount - 1, maxY + 1); y += 1) {
     for (let x = minX - 1; x <= maxX + 1; x += 1) {
       const wrappedX = ((x % tileCount) + tileCount) % tileCount;
-      tiles.push({
-        z: zoom,
-        x: wrappedX,
-        y,
-        left: x * 256 - topLeft.x,
-        top: y * 256 - topLeft.y,
-        url: `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${y}.png`,
-      });
+      tiles.push({ z: zoom, x: wrappedX, y, left: x * 256 - topLeft.x, top: y * 256 - topLeft.y, url: `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${y}.png` });
     }
   }
   return tiles;
@@ -1831,7 +1330,60 @@ function MapDetail({ airportCode: code, flight, alternates, tab, weatherLive }) 
   return <div className="space-y-2">{flight.notams?.length ? flight.notams.map((n, i) => <NotamItem key={i} text={n} last={i === flight.notams.length - 1} />) : <div className="py-8 text-center text-[13px] text-gray-500">No NOTAMs were returned in this OFP.</div>}</div>;
 }
 
-function NavLogRow({ fix, index }) { return <tr className="hover:bg-gray-50"><td className="px-3 py-3">{index + 1}</td><td className="px-3 py-3 font-semibold">{getIdent(fix, `FIX${index + 1}`)}</td><td className="px-3 py-3">{firstValue(fix.stage, fix.phase, "-")}</td><td className="px-3 py-3">{fixAltitude(fix)}</td><td className="px-3 py-3">{firstValue(fix.ind_airspeed, fix.ias, "-")}</td><td className="px-3 py-3">{firstValue(fix.true_airspeed, fix.tas, "-")}</td><td className="px-3 py-3">{firstValue(fix.mach, "-")}</td><td className="px-3 py-3">{firstValue(fix.groundspeed, fix.gs, "-")}</td><td className="px-3 py-3">{fixWind(fix)}</td><td className="px-3 py-3">{firstValue(fix.wind_component, fix.wc, "-")}</td><td className="px-3 py-3">{fixTemperature(fix)}</td><td className="px-3 py-3">{firstValue(fix.distance, "-")}</td><td className="px-3 py-3">{formatNavTime(firstValue(fix.time_leg, fix.leg_time, fix.ete))}</td><td className="px-3 py-3">{formatNavTime(firstValue(fix.time_total, fix.time, fix.total_time))}</td><td className="px-3 py-3">{firstValue(fix.fuel_leg, fix.fuel, fix.fob, "-")}</td><td className="px-3 py-3">{firstValue(fix.fuel_totalused, fix.fuel_plan_onboard, fix.efob, fix.fob, "-")}</td><td className="px-3 py-3">{firstValue(fix.via_airway, fix.airway, "-")}</td></tr>; }
+function calculateTimeDelta(planned, actual) {
+  if (!planned || planned === "-" || !actual) return "-";
+  const toMinutes = (value) => {
+    const m = String(value).match(/^(\d{1,2}):(\d{2})$/);
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  };
+  const p = toMinutes(planned);
+  const a = toMinutes(actual);
+  if (p == null || a == null) return "-";
+  let diff = a - p;
+  if (diff > 720) diff -= 1440;
+  if (diff < -720) diff += 1440;
+  const sign = diff > 0 ? "+" : diff < 0 ? "-" : "";
+  const abs = Math.abs(diff);
+  return `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+}
+
+function NavLogRow({ fix, index, actualTime, onActualTimeChange }) {
+  const ident = getIdent(fix, `FIX${index + 1}`);
+  const planned = formatNavTime(firstValue(fix.time_total, fix.time, fix.eta, fix.ete, fix.total_time));
+  const actual = actualTime || "";
+  const delta = actual ? calculateTimeDelta(planned, actual) : "-";
+  return (
+    <tr className="hover:bg-gray-50 align-middle">
+      <td className="px-3 py-2 text-gray-500">{index + 1}</td>
+      <td className="px-3 py-2 font-semibold">{ident}</td>
+      <td className="px-3 py-2">{firstValue(fix.stage, fix.phase, "-")}</td>
+      <td className="px-3 py-2">{fixAltitude(fix)}</td>
+      <td className="px-3 py-2">{firstValue(fix.ind_airspeed, fix.ias, "-")}</td>
+      <td className="px-3 py-2">{firstValue(fix.true_airspeed, fix.tas, "-")}</td>
+      <td className="px-3 py-2">{firstValue(fix.mach, "-")}</td>
+      <td className="px-3 py-2">{firstValue(fix.groundspeed, fix.gs, "-")}</td>
+      <td className="px-3 py-2">{fixWind(fix)}</td>
+      <td className="px-3 py-2">{firstValue(fix.wind_component, fix.wc, "-")}</td>
+      <td className="px-3 py-2">{fixTemperature(fix)}</td>
+      <td className="px-3 py-2">{firstValue(fix.distance, fix.distance_nm, "-")}</td>
+      <td className="px-3 py-2">{formatNavTime(firstValue(fix.time_leg, fix.leg_time, fix.ete))}</td>
+      <td className="px-3 py-2">{planned}</td>
+      <td className="px-3 py-2">
+        <input
+          type="time"
+          value={actual}
+          onChange={(event) => onActualTimeChange(event.target.value)}
+          aria-label={`Actual time at ${ident}`}
+          className="h-[32px] w-[96px] rounded border border-gray-300 bg-white px-2 text-[12px] outline-none focus:border-[#526C9B]"
+        />
+      </td>
+      <td className={`px-3 py-2 font-semibold ${delta !== "-" && delta !== "00:00" ? "text-[#B56A00]" : "text-gray-500"}`}>{delta}</td>
+      <td className="px-3 py-2">{firstValue(fix.fuel_leg, fix.fuel, fix.fob, "-")}</td>
+      <td className="px-3 py-2">{firstValue(fix.fuel_totalused, fix.fuel_plan_onboard, fix.efob, fix.fob, "-")}</td>
+      <td className="px-3 py-2">{firstValue(fix.via_airway, fix.airway, "-")}</td>
+    </tr>
+  );
+}
 
 function BriefingValue({ label, value }) { return <div className="min-w-0"><div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-gray-500">{label}</div><div className="truncate text-[17px] font-medium text-[#25282C]">{value}</div></div>; }
 function WeightRow({ name, planned, actual, operational, structural }) { return <div className="grid min-h-[56px] grid-cols-[1.2fr_1fr_1fr_1.1fr_1.1fr] items-center"><span className="text-[15px] font-medium">{name}</span><span className="text-[16px] font-medium">{planned || "-"}</span><span className="text-[16px]">{actual || "-"}</span><span className="text-[16px] text-center">{operational || "-"}</span><span className="text-right text-[16px] font-medium">{structural || "-"}</span></div>; }
