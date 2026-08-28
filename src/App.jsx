@@ -1,8 +1,8 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   LayoutGrid,
   FileText,
-  Map,
+  Map as MapIcon,
   GitFork,
   List,
   Languages,
@@ -19,30 +19,20 @@ import {
   CheckCircle2,
   Loader2,
   Copy,
+  RefreshCw,
 } from "lucide-react";
 
 const navigationItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutGrid },
   { id: "briefing", label: "Briefing", icon: FileText },
-  { id: "map", label: "Map", icon: Map },
+  { id: "map", label: "Map", icon: MapIcon },
   { id: "clearances", label: "Clearances", icon: GitFork },
   { id: "navlog", label: "NavLog", icon: List },
 ];
 
-const airports = ["KEWR", "KDCA", "ALTN"];
-
-const airportsList = [
-  { icao: "KEWR/EWR", name: "NEWARK/LIBERTY INTL", role: "Departure", type: "main" },
-  { icao: "KDCA/DCA", name: "WASHINGTON REAGAN", role: "Arrival", type: "main" },
-  { icao: "KBWI/BWI", name: "BALTIMORE/WASHINGTON", role: "Arrival Alternate", type: "main" },
-  { icao: "KIAD/IAD", name: "WASHINGTON DULLES", role: "Arrival Alternate", type: "main" },
-  { icao: "KRIC/RIC", name: "RICHMOND INTL", role: "Arrival Alternate", type: "main" },
-  { icao: "KPHL/PHL", name: "PHILADELPHIA INTL", role: "Arrival Alternate", type: "main" },
-];
-
-
 const SIMBRIEF_STORAGE_KEY = "virtual-lido-simbrief-user";
-const SIMBRIEF_OFP_STORAGE_KEY = "virtual-lido-simbrief-ofp";
+const SIMBRIEF_OFP_STORAGE_KEY = "virtual-lido-simbrief-ofp-v3";
+const SIMBRIEF_FUEL_ORDER_KEY = "virtual-lido-fuel-ordered-v3";
 
 function safeStorageGet(key) {
   try {
@@ -56,27 +46,22 @@ function safeStorageSet(key, value) {
   try {
     localStorage.setItem(key, value);
   } catch {
-    // Ignore storage errors (private mode / blocked storage).
+    // Browser storage can be disabled; app still works without it.
   }
 }
 
 function getPath(object, path, fallback = "") {
-  const parts = path.split(".");
+  const parts = String(path).split(".");
   let value = object;
   for (const part of parts) {
     if (value == null) return fallback;
     value = value[part];
   }
-  return value == null || value === "" ? fallback : value;
+  return value === undefined || value === null || value === "" ? fallback : value;
 }
 
 function firstValue(...values) {
   return values.find((value) => value !== undefined && value !== null && value !== "") ?? "";
-}
-
-function toNumber(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
 }
 
 function toArray(value) {
@@ -85,245 +70,261 @@ function toArray(value) {
   return [value];
 }
 
+function toNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function formatNumber(value, digits = 0) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "-";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "-";
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,
-  }).format(number);
+  }).format(n);
 }
 
-function formatWeight(value, units = "kgs") {
-  if (value === undefined || value === null || value === "") return "-";
-  const unit = String(units).toLowerCase().includes("lbs") ? "lb" : "kg";
-  return `${formatNumber(value)} ${unit}`;
-}
-
-function formatDuration(seconds) {
-  const total = Math.max(0, Math.round(toNumber(seconds)));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-}
-
-function formatUtcTime(value) {
-  if (value === undefined || value === null || value === "") return "-";
-
-  // SimBrief JSON v2 returns ISO timestamps for time fields.
-  if (typeof value === "string" && /[T:-]/.test(value)) {
-    const date = new Date(value);
-    if (!Number.isNaN(date.getTime())) return date.toISOString().slice(11, 16);
+function formatDuration(value) {
+  if (value === undefined || value === null || value === "") return "--:--";
+  if (typeof value === "string" && /^\d{1,3}:\d{2}(?::\d{2})?$/.test(value.trim())) {
+    const p = value.trim().split(":");
+    return p.length === 3 ? `${p[0]}:${p[1]}` : value.trim();
   }
+  const seconds = toNumber(value, NaN);
+  if (!Number.isFinite(seconds)) return "--:--";
+  const total = Math.max(0, Math.round(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
 
+function formatTime(value) {
+  if (value === undefined || value === null || value === "") return "--:--";
   const raw = String(value).trim();
 
-  // HHMM timestamps occasionally appear in older/alternate formats.
-  if (/^\d{4}$/.test(raw)) {
-    return `${raw.slice(0, 2)}:${raw.slice(2, 4)}`;
-  }
+  if (/^\d{4}$/.test(raw)) return `${raw.slice(0, 2)}:${raw.slice(2, 4)}`;
+  if (/^\d{1,2}:\d{2}(?::\d{2})?$/.test(raw)) return raw.slice(0, 5);
 
-  // Unix timestamp (seconds).
-  const timestamp = Number(value);
-  if (Number.isFinite(timestamp) && timestamp > 0) {
-    const date = new Date(timestamp > 1e12 ? timestamp : timestamp * 1000);
-    if (!Number.isNaN(date.getTime())) return date.toISOString().slice(11, 16);
-  }
-
-  return "-";
-}
-
-function formatTimeOrDash(value) {
-  const result = formatUtcTime(value);
-  return result === "-" ? "--:--" : result;
-}
-
-function formatAltitude(value) {
-  if (value === undefined || value === null || value === "") return "-";
-  const raw = String(value);
-  if (/^FL/i.test(raw)) return raw.toUpperCase();
-  const number = Number(value);
-  if (Number.isFinite(number)) {
-    return number >= 1000 ? `FL${Math.round(number / 100)}` : String(number);
-  }
-  return raw;
-}
-
-function parseLatLon(value) {
-  if (value === undefined || value === null || value === "") return null;
   const n = Number(value);
-  if (Number.isFinite(n)) return n;
+  if (Number.isFinite(n) && n > 0) {
+    const d = new Date(n > 1e12 ? n : n * 1000);
+    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(11, 16);
+  }
 
+  const d = new Date(raw);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(11, 16);
+  return "--:--";
+}
+
+function parseCoordinate(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const direct = Number(value);
+  if (Number.isFinite(direct)) return direct;
   const raw = String(value).trim().toUpperCase();
-  const match = raw.match(/^([NS])(\d{2})(\d{2}(?:\.\d+)?)$/);
-  if (match) {
-    const degrees = Number(match[2]);
-    const minutes = Number(match[3]);
-    const result = degrees + minutes / 60;
-    return match[1] === "S" ? -result : result;
+
+  const dmLat = raw.match(/^([NS])(\d{2})(\d{2}(?:\.\d+)?)$/);
+  if (dmLat) {
+    const v = Number(dmLat[2]) + Number(dmLat[3]) / 60;
+    return dmLat[1] === "S" ? -v : v;
   }
-  const matchLong = raw.match(/^([EW])(\d{3})(\d{2}(?:\.\d+)?)$/);
-  if (matchLong) {
-    const degrees = Number(matchLong[2]);
-    const minutes = Number(matchLong[3]);
-    const result = degrees + minutes / 60;
-    return matchLong[1] === "W" ? -result : result;
+
+  const dmLon = raw.match(/^([EW])(\d{3})(\d{2}(?:\.\d+)?)$/);
+  if (dmLon) {
+    const v = Number(dmLon[2]) + Number(dmLon[3]) / 60;
+    return dmLon[1] === "W" ? -v : v;
   }
+
+  const decimalHemisphere = raw.match(/^([+-]?\d+(?:\.\d+)?)[, ]*([NS])$/);
+  if (decimalHemisphere) {
+    const v = Number(decimalHemisphere[1]);
+    return decimalHemisphere[2] === "S" ? -Math.abs(v) : Math.abs(v);
+  }
+
   return null;
 }
 
-function fixLat(fix) {
-  return parseLatLon(firstValue(fix?.pos_lat, fix?.lat, fix?.latitude, fix?.position?.lat));
+function getLat(point) {
+  return parseCoordinate(
+    firstValue(point?.pos_lat, point?.lat, point?.latitude, point?.position?.lat, point?.coordinates?.lat)
+  );
 }
 
-function fixLon(fix) {
-  return parseLatLon(firstValue(fix?.pos_long, fix?.lon, fix?.lng, fix?.longitude, fix?.position?.lon, fix?.position?.long));
+function getLon(point) {
+  return parseCoordinate(
+    firstValue(
+      point?.pos_long,
+      point?.pos_lon,
+      point?.lon,
+      point?.lng,
+      point?.longitude,
+      point?.position?.lon,
+      point?.position?.long,
+      point?.coordinates?.lon
+    )
+  );
 }
 
-function normalizeNavlog(rawNavlog) {
-  const candidates = [
-    rawNavlog?.fix,
-    rawNavlog?.fixes,
-    rawNavlog?.waypoint,
-    rawNavlog?.waypoints,
-    rawNavlog,
-  ];
-
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate) && candidate.length) return candidate.filter(Boolean);
-    if (candidate && typeof candidate === "object") {
-      if (candidate.ident || candidate.fix_ident || candidate.name) return [candidate];
-      const values = Object.values(candidate).filter(
-        (item) => item && typeof item === "object" && (item.ident || item.fix_ident || item.name || item.pos_lat)
-      );
-      if (values.length) return values;
-    }
-  }
-
-  return [];
+function getIdent(point, fallback = "FIX") {
+  return firstValue(point?.ident, point?.fix_ident, point?.name, point?.icao_code, point?.icao, fallback);
 }
 
-function formatLegTime(value) {
-  if (value === undefined || value === null || value === "") return "-";
-  if (typeof value === "string" && /^\d{1,2}:\d{2}(?::\d{2})?$/.test(value.trim())) {
-    const parts = value.trim().split(":");
-    return parts.length === 3 ? `${parts[0]}:${parts[1]}` : value.trim();
-  }
-  const n = Number(value);
-  if (Number.isFinite(n) && n >= 0) return formatDuration(n);
-  return String(value);
+function airportFromOFP(point = {}) {
+  return {
+    icao: firstValue(point.icao_code, point.icao, point.ident, point.id),
+    iata: firstValue(point.iata_code, point.iata),
+    name: firstValue(point.icao_name, point.name, point.airport_name, "UNKNOWN AIRPORT"),
+    runway: firstValue(point.plan_rwy, point.runway, point.rwy),
+    lat: getLat(point),
+    lon: getLon(point),
+    elevation: firstValue(point.elevation, point.elev),
+  };
 }
 
-function extractAlternates(ofp) {
-  const found = [];
+function recursiveObjectValues(value) {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.flatMap(recursiveObjectValues);
+  return [value, ...Object.values(value).flatMap(recursiveObjectValues)];
+}
+
+function normalizeNavlog(ofp) {
+  const raw = firstValue(ofp?.navlog?.fix, ofp?.navlog?.fixes, ofp?.navlog?.waypoint, ofp?.navlog?.waypoints, ofp?.navlog);
+
+  const expand = (value) => {
+    if (Array.isArray(value)) return value;
+    if (!value || typeof value !== "object") return [];
+    const hasFixFields = ["ident", "fix_ident", "name", "pos_lat", "pos_long", "lat", "lon", "latitude", "longitude"].some((key) => value[key] !== undefined);
+    if (hasFixFields) return [value];
+    const values = Object.values(value).filter((item) => item && typeof item === "object");
+    return values.length ? values.flatMap(expand) : [value];
+  };
+
+  return expand(raw)
+    .filter((fix) => fix && typeof fix === "object")
+    .map((fix, index) => ({
+      ...fix,
+      ident: getIdent(fix, `FIX${index + 1}`),
+      lat: getLat(fix),
+      lon: getLon(fix),
+    }))
+    .filter((fix) => fix.ident || Number.isFinite(fix.lat) || Number.isFinite(fix.lon));
+}
+
+function collectAlternateObjects(ofp) {
+  const result = [];
   const seen = new Set();
 
-  const addAirport = (value, keyHint = "") => {
-    if (!value || typeof value !== "object") return;
-    const airport = airportFromOFP(value);
-    if (!airport.icao) return;
-    if (airport.icao === ofp?.origin?.icao_code || airport.icao === ofp?.destination?.icao_code) return;
-    const key = airport.icao.toUpperCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      airport.role = "Alternate";
-      found.push({
-        ...airport,
-        lat: parseLatLon(firstValue(value.pos_lat, value.lat, value.latitude)),
-        lon: parseLatLon(firstValue(value.pos_long, value.lon, value.longitude)),
-      });
-    }
+  const add = (candidate, role = "Alternate") => {
+    if (!candidate || typeof candidate !== "object") return;
+    const apt = airportFromOFP(candidate);
+    if (!apt.icao) return;
+    const icao = String(apt.icao).toUpperCase();
+    const origin = String(firstValue(ofp?.origin?.icao_code, ofp?.origin?.icao, ofp?.orig) || "").toUpperCase();
+    const destination = String(firstValue(ofp?.destination?.icao_code, ofp?.destination?.icao, ofp?.dest) || "").toUpperCase();
+    if (icao === origin || icao === destination) return;
+    if (seen.has(icao)) return;
+    seen.add(icao);
+    result.push({ ...apt, icao, role, altRole: role, metar: firstValue(candidate.metar, candidate.notam_metar, candidate.altn_metar, ""), taf: firstValue(candidate.taf, candidate.altn_taf, "") });
   };
 
-  const walk = (node, keyHint = "") => {
-    if (!node || typeof node !== "object") return;
+  const directCandidates = [
+    ofp?.alternate,
+    ofp?.alternates,
+    ofp?.altn,
+    ofp?.alternate_airports,
+    ofp?.alternate_airport,
+  ];
 
-    if (Array.isArray(node)) {
-      node.forEach((item) => walk(item, keyHint));
-      return;
-    }
+  directCandidates.forEach((value) => {
+    toArray(value).forEach((item) => {
+      if (typeof item === "string" && /^[A-Z]{4}$/i.test(item.trim())) add({ icao_code: item.trim().toUpperCase(), name: item.trim().toUpperCase() });
+      else add(item);
+    });
+  });
 
-    const hint = keyHint.toLowerCase();
-    if (hint.includes("altn") || hint.includes("alternate")) {
-      addAirport(node, hint);
-    }
-
-    for (const [key, value] of Object.entries(node)) {
-      const lower = key.toLowerCase();
-
-      // Explicit alternate airport object(s)
-      if (lower.includes("altn") || lower.includes("alternate")) {
-        if (typeof value === "string") {
-          for (const token of value.split(/[,\s]+/).filter(Boolean)) {
-            if (/^[A-Z]{4}$/i.test(token)) {
-              if (!seen.has(token.toUpperCase())) {
-                seen.add(token.toUpperCase());
-                found.push({
-                  icao: token.toUpperCase(),
-                  iata: "",
-                  name: token.toUpperCase(),
-                  role: "Alternate",
-                  runway: "",
-                  lat: null,
-                  lon: null,
-                });
-              }
-            }
-          }
-        } else {
-          walk(value, lower);
-        }
-      } else if (value && typeof value === "object") {
-        walk(value, lower);
+  const keys = Object.keys(ofp || {});
+  keys
+    .filter((key) => /^(altn_\d+|alternate_?\d+|altn\d+)/i.test(key))
+    .forEach((key) => {
+      const value = ofp[key];
+      if (value && typeof value === "object") add(value);
+      if (typeof value === "string" && /^[A-Z]{4}$/i.test(value.trim())) {
+        add({ icao_code: value.trim().toUpperCase(), name: value.trim().toUpperCase() });
       }
-    }
-  };
+    });
 
-  walk(ofp);
-  return found;
-}
-
-function airportFromOFP(value = {}) {
-  return {
-    icao: firstValue(value.icao_code, value.icao, value.ident),
-    iata: firstValue(value.iata_code, value.iata),
-    name: firstValue(value.name, "UNKNOWN AIRPORT"),
-    role: "",
-    runway: firstValue(value.plan_rwy, value.runway),
-  };
-}
-
-function normalizeNotams(rawNotams) {
-  const items = [];
-  const roots = [rawNotams, getPath(rawNotams, "notam", []), getPath(rawNotams, "item", [])];
-  for (const root of roots) {
-    for (const item of toArray(root)) {
-      if (typeof item === "string" && item.trim()) items.push(item.trim());
-      else if (item && typeof item === "object") {
-        const text = firstValue(item.text, item.body, item.notam, item.raw, item.message);
-        if (text) items.push(String(text).trim());
-      }
-    }
+  for (let i = 1; i <= 4; i += 1) {
+    const id = firstValue(ofp?.[`altn_${i}_id`], ofp?.[`alternate_${i}_id`], ofp?.[`altn${i}`]);
+    if (id) add({ icao_code: id, name: id, plan_rwy: firstValue(ofp?.[`altn_${i}_rwy`], "") });
   }
-  return [...new Set(items)];
+
+  // JSON v2 can carry alternate data nested inside the OFP. Walk every object and
+  // also detect canonical altn_1_id .. altn_4_id fields wherever they occur.
+  recursiveObjectValues(ofp).forEach((node) => {
+    if (!node || typeof node !== "object") return;
+    const keysInNode = Object.keys(node).join(" ").toLowerCase();
+    if (keysInNode.includes("altn") || keysInNode.includes("alternate")) {
+      const icao = firstValue(node.icao_code, node.icao, node.ident, node.id, node.airport);
+      if (icao && /^[A-Z]{4}$/i.test(String(icao))) add(node);
+    }
+    for (let i = 1; i <= 4; i += 1) {
+      const id = firstValue(node[`altn_${i}_id`], node[`alternate_${i}_id`], node[`altn${i}`]);
+      if (id && /^[A-Z]{4}$/i.test(String(id))) {
+        add({
+          icao_code: String(id).trim().toUpperCase(),
+          iata_code: firstValue(node[`altn_${i}_iata`], ""),
+          name: firstValue(node[`altn_${i}_name`], String(id).trim().toUpperCase()),
+          plan_rwy: firstValue(node[`altn_${i}_rwy`], ""),
+          pos_lat: firstValue(node[`altn_${i}_lat`], ""),
+          pos_long: firstValue(node[`altn_${i}_lon`], ""),
+        });
+      }
+    }
+  });
+
+  return result;
+}
+
+function normalizeNotams(ofp) {
+  const texts = [];
+  const seen = new Set();
+
+  const addText = (value) => {
+    if (value === undefined || value === null) return;
+    const text = String(value).replace(/\s+/g, " ").trim();
+    if (!text || text.length < 4 || seen.has(text)) return;
+    seen.add(text);
+    texts.push(text);
+  };
+
+  recursiveObjectValues(ofp?.notams || ofp?.notam || ofp)
+    .filter((node) => node && typeof node === "object")
+    .forEach((node) => {
+      const keys = Object.keys(node).join(" ").toLowerCase();
+      if (!keys.includes("notam")) return;
+      addText(firstValue(node.notam_text, node.notam_report, node.text, node.body, node.raw, node.message, node.notam));
+    });
+
+  // Some payloads expose a flat array under notams/notam.
+  [...toArray(ofp?.notams), ...toArray(ofp?.notam)].forEach((item) => {
+    if (typeof item === "string") addText(item);
+    else if (item && typeof item === "object") {
+      addText(firstValue(item.notam_text, item.notam_report, item.text, item.body, item.raw, item.message));
+    }
+  });
+
+  return texts;
+}
+
+function rootOrNested(ofp, nested, keys) {
+  const values = [];
+  keys.forEach((key) => values.push(nested?.[key], ofp?.[key]));
+  return firstValue(...values);
 }
 
 function normalizeSimBriefOFP(ofp) {
-  const originRaw = ofp?.origin || {};
-  const destinationRaw = ofp?.destination || {};
-  const origin = {
-    ...airportFromOFP(originRaw),
-    role: "Departure",
-    lat: parseLatLon(firstValue(originRaw.pos_lat, originRaw.lat, originRaw.latitude)),
-    lon: parseLatLon(firstValue(originRaw.pos_long, originRaw.lon, originRaw.longitude)),
-  };
-  const destination = {
-    ...airportFromOFP(destinationRaw),
-    role: "Arrival",
-    lat: parseLatLon(firstValue(destinationRaw.pos_lat, destinationRaw.lat, destinationRaw.latitude)),
-    lon: parseLatLon(firstValue(destinationRaw.pos_long, destinationRaw.lon, destinationRaw.longitude)),
-  };
-
+  const origin = airportFromOFP(ofp?.origin || {});
+  const destination = airportFromOFP(ofp?.destination || {});
+  const alternates = collectAlternateObjects(ofp);
   const aircraft = ofp?.aircraft || {};
   const general = ofp?.general || {};
   const atc = ofp?.atc || {};
@@ -332,185 +333,178 @@ function normalizeSimBriefOFP(ofp) {
   const times = ofp?.times || {};
   const weather = ofp?.weather || {};
   const params = ofp?.params || {};
+  const navlog = normalizeNavlog(ofp);
+  const units = firstValue(params.units, ofp?.units, "kgs");
 
-  const navlog = normalizeNavlog(ofp?.navlog);
-  const alternates = extractAlternates(ofp);
-
-  const fuelUnits = firstValue(params.units, "kgs");
+  const flightNumber = firstValue(
+    general.flight_number,
+    general.flightnumber,
+    ofp?.flight_number,
+    ofp?.fltnum,
+    atc.flight_number
+  );
+  const airline = firstValue(general.icao_airline, general.airline, ofp?.icao_airline, ofp?.airline);
   const callsign = firstValue(
     atc.callsign,
     general.callsign,
-    `${firstValue(general.icao_airline, "")}${firstValue(general.flight_number, "")}`
+    ofp?.callsign,
+    airline && flightNumber ? `${airline}${flightNumber}` : ""
   );
+
   const route = firstValue(
     atc.route,
+    atc.flightplan_route,
     general.route,
     ofp?.route,
-    getPath(ofp, "atc.flightplan_route")
+    ofp?.route_navigraph,
+    ofp?.route_ifps
   );
 
   const cruiseAltitude = firstValue(
     general.initial_altitude,
     general.cruise_altitude,
+    general.initial_fl,
     atc.initial_alt,
-    getPath(atc, "initial_alt"),
-    navlog.find((fix) => String(fix.stage || "").toUpperCase() === "CRZ")?.altitude
+    ofp?.cruise_altitude,
+    ofp?.altitude,
+    ofp?.fl
   );
 
-  const flightTime = firstValue(
+  const tripSeconds = firstValue(
     times.est_time_enroute,
     times.sched_time_enroute,
-    times.enroute_time
+    times.time_enroute,
+    ofp?.est_time_enroute,
+    ofp?.sched_time_enroute,
+    ofp?.time_enroute
   );
+
+  const weatherValue = (keys) => firstValue(...keys.flatMap((key) => [weather?.[key], ofp?.[key]]));
 
   return {
     raw: ofp,
     params,
     general,
-    origin,
-    destination,
-    alternate: alternates[0] || { icao: "", iata: "", name: "NO ALTERNATE", role: "Alternate" },
-    alternates,
-    aircraft,
     atc,
+    aircraft,
     fuel,
     weights,
     times,
     weather,
     navlog,
-    notams: normalizeNotams(ofp?.notams),
-    flightNumber: firstValue(general.flight_number, atc.flight_number),
-    airline: firstValue(general.icao_airline, ""),
+    notams: normalizeNotams(ofp),
+    origin,
+    destination,
+    alternate: alternates[0] || null,
+    alternates,
+    flightNumber,
+    airline,
     callsign,
-    aircraftIcao: firstValue(aircraft.icaocode, aircraft.icao_code, aircraft.icao),
-    aircraftName: firstValue(aircraft.name, aircraft.type, aircraftIcaoFallback(aircraft)),
-    registration: firstValue(aircraft.reg, aircraft.registration, aircraft.registration_number),
+    aircraftIcao: firstValue(aircraft.icaocode, aircraft.icao_code, ofp?.type),
+    aircraftName: firstValue(aircraft.name, aircraft.type, ofp?.aircraft?.aircraft_name),
+    registration: firstValue(aircraft.reg, aircraft.registration, ofp?.reg),
+    fin: firstValue(aircraft.fin, ofp?.fin),
     route,
     cruiseAltitude,
-    costIndex: firstValue(general.costindex, general.cost_index, general.cruise_profile, general.cost_index_value),
-    fuelUnits,
-    tripFuel: firstValue(fuel.enroute_burn, fuel.trip_burn, fuel.trip),
-    alternateFuel: firstValue(fuel.alternate_burn, fuel.altn_burn, fuel.alternate),
-    reserveFuel: firstValue(fuel.reserve, fuel.reserve_fuel),
-    taxiFuel: firstValue(fuel.taxi, fuel.taxi_burn),
-    contingencyFuel: firstValue(fuel.contingency, fuel.cont),
-    etopsFuel: firstValue(fuel.etops, fuel.etops_fuel),
-    extraFuel: firstValue(fuel.extra, fuel.extra_fuel),
-    minTakeoffFuel: firstValue(fuel.min_takeoff, fuel.min_takeoff_fuel, fuel.min_block),
-    takeoffFuel: firstValue(fuel.plan_takeoff, fuel.takeoff, fuel.takeoff_fuel),
-    rampFuel: firstValue(fuel.plan_ramp, fuel.ramp, fuel.ramp_fuel),
-    landingFuel: firstValue(fuel.plan_landing, fuel.landing, fuel.landing_fuel),
-    zfw: firstValue(weights.est_zfw, weights.plan_zfw),
-    tow: firstValue(weights.est_tow, weights.plan_tow),
-    ldw: firstValue(weights.est_ldw, weights.plan_ldw),
-    maxZfw: firstValue(weights.max_zfw),
-    maxTow: firstValue(weights.max_tow, weights.max_tow_struct),
-    maxLdw: firstValue(weights.max_ldw),
-    payload: firstValue(weights.payload),
-    pax: firstValue(weights.pax_count, weights.pax),
-    oew: firstValue(weights.oew),
-    scheduledOut: firstValue(times.sched_out, times.est_out),
-    scheduledOff: firstValue(times.sched_off, times.est_off),
-    scheduledOn: firstValue(times.sched_on, times.est_on),
-    scheduledIn: firstValue(times.sched_in, times.est_in),
-    offBlockTime: firstValue(times.est_out, times.sched_out),
-    takeoffTime: firstValue(times.est_off, times.sched_off),
-    landingTime: firstValue(times.est_on, times.sched_on),
-    onBlockTime: firstValue(times.est_in, times.sched_in),
-    actualOut: firstValue(times.actual_out),
-    actualOff: firstValue(times.actual_off),
-    actualOn: firstValue(times.actual_on),
-    actualIn: firstValue(times.actual_in),
-    tripTime: formatDuration(firstValue(flightTime, 0)),
-    originMetar: firstValue(weather.orig_metar, weather.origin_metar),
-    originTaf: firstValue(weather.orig_taf, weather.origin_taf),
-    destinationMetar: firstValue(weather.dest_metar, weather.destination_metar),
-    destinationTaf: firstValue(weather.dest_taf, weather.destination_taf),
-    alternateMetar: firstValue(weather.altn_metar, weather.alternate_metar),
-    alternateTaf: firstValue(weather.altn_taf, weather.alternate_taf),
-    pdcText: firstValue(atc.flightplan_text, atc.pdc, ofp?.text?.atc),
+    costIndex: firstValue(general.costindex, general.cost_index, ofp?.costindex, ofp?.cost_index, ""),
+    cruiseProfile: firstValue(general.cruise_profile, ofp?.cruise_profile),
+    fuelUnits: units,
+    tripFuel: firstValue(fuel.enroute_burn, fuel.total_burn, ofp?.enroute_burn),
+    alternateFuel: firstValue(fuel.alternate_burn, fuel.altn_burn, ofp?.alternate_burn),
+    reserveFuel: firstValue(fuel.reserve, ofp?.reserve),
+    taxiFuel: firstValue(fuel.taxi, fuel.taxi_out, ofp?.taxi),
+    contingencyFuel: firstValue(fuel.contingency, fuel.cont, ofp?.contingency),
+    etopsFuel: firstValue(fuel.etops, ofp?.etopsfuel),
+    extraFuel: firstValue(fuel.extra, ofp?.extra),
+    minTakeoffFuel: firstValue(fuel.min_takeoff, ofp?.min_takeoff),
+    takeoffFuel: firstValue(fuel.plan_takeoff, fuel.takeoff, ofp?.plan_takeoff, ofp?.plan_fob),
+    rampFuel: firstValue(fuel.plan_ramp, fuel.ramp, ofp?.plan_ramp, ofp?.ramp_fuel),
+    landingFuel: firstValue(fuel.plan_landing, fuel.landing, ofp?.plan_landing),
+    zfw: firstValue(weights.est_zfw, weights.plan_zfw, ofp?.est_zfw),
+    tow: firstValue(weights.est_tow, weights.plan_tow, ofp?.est_tow),
+    ldw: firstValue(weights.est_ldw, weights.plan_ldw, ofp?.est_ldw),
+    maxZfw: firstValue(weights.max_zfw, ofp?.max_zfw),
+    maxTow: firstValue(weights.max_tow, weights.max_tow_struct, ofp?.max_tow),
+    maxLdw: firstValue(weights.max_ldw, ofp?.max_ldw),
+    payload: firstValue(weights.payload, ofp?.payload),
+    pax: firstValue(weights.pax_count, weights.pax_count_actual, ofp?.pax_count, ofp?.pax),
+    oew: firstValue(weights.oew, ofp?.oew),
+    dow: firstValue(weights.dow, weights.est_dow, ofp?.dow),
+    scheduledOut: firstValue(times.sched_out, ofp?.sched_out),
+    estimatedOut: firstValue(times.est_out, ofp?.est_out),
+    scheduledOff: firstValue(times.sched_off, ofp?.sched_off),
+    estimatedOff: firstValue(times.est_off, ofp?.est_off),
+    scheduledOn: firstValue(times.sched_on, ofp?.sched_on),
+    estimatedOn: firstValue(times.est_on, ofp?.est_on),
+    scheduledIn: firstValue(times.sched_in, ofp?.sched_in),
+    estimatedIn: firstValue(times.est_in, ofp?.est_in),
+    actualOut: firstValue(times.actual_out, ofp?.actual_out),
+    actualOff: firstValue(times.actual_off, ofp?.actual_off),
+    actualOn: firstValue(times.actual_on, ofp?.actual_on),
+    actualIn: firstValue(times.actual_in, ofp?.actual_in),
+    tripTime: formatDuration(tripSeconds),
+    blockTime: formatDuration(firstValue(times.est_block, ofp?.est_block, times.sched_block, ofp?.sched_block)),
+    originMetar: weatherValue(["orig_metar", "origin_metar"]),
+    originTaf: weatherValue(["orig_taf", "origin_taf"]),
+    destinationMetar: weatherValue(["dest_metar", "destination_metar"]),
+    destinationTaf: weatherValue(["dest_taf", "destination_taf"]),
+    alternateMetar: weatherValue(["altn_metar"]),
+    alternateTaf: weatherValue(["altn_taf"]),
+    pdcText: firstValue(atc.flightplan_text, ofp?.flightplan_text, getPath(ofp, "text.atc")),
+    issued: firstValue(ofp?.issued, general.issued),
+    airDistance: firstValue(general.air_distance, ofp?.air_distance),
+    groundDistance: firstValue(general.gc_distance, general.route_distance, ofp?.gc_distance, ofp?.route_distance),
+    avgWindDir: firstValue(general.avg_wind_dir, ofp?.avg_wind_dir),
+    avgWindSpeed: firstValue(general.avg_wind_spd, ofp?.avg_wind_spd),
+    avgWindComponent: firstValue(general.avg_wind_comp, ofp?.avg_wind_comp),
+    avgFuelFlow: firstValue(general.avg_fuel_flow, ofp?.avg_fuel_flow),
   };
 }
 
-function aircraftIcaoFallback(aircraft) {
-  return firstValue(aircraft.iatacode, "-");
-}
-
-export default function App() {
-  const [activeTab, setActiveTab] = useState("map");
-  const [dashboardPage, setDashboardPage] = useState(0);
-  const [weatherAirport, setWeatherAirport] = useState("KEWR");
-  const [selectedAirport, setSelectedAirport] = useState(airportsList[0]);
-  const [subTab, setSubTab] = useState("RAIM"); // NOTAM, RAIM
-  const [simbriefUser, setSimbriefUser] = useState(() => safeStorageGet(SIMBRIEF_STORAGE_KEY));
-  const [simbriefData, setSimbriefData] = useState(() => {
-    const stored = safeStorageGet(SIMBRIEF_OFP_STORAGE_KEY);
-    if (!stored) return null;
-    try {
-      return JSON.parse(stored);
-    } catch {
-      return null;
-    }
-  });
-  const [showSimBriefModal, setShowSimBriefModal] = useState(false);
-  const [simbriefInput, setSimbriefInput] = useState(() => safeStorageGet(SIMBRIEF_STORAGE_KEY));
-  const [simbriefLoading, setSimbriefLoading] = useState(false);
-  const [simbriefError, setSimbriefError] = useState("");
-  const [simbriefImportedAt, setSimbriefImportedAt] = useState(() => {
-    const stored = safeStorageGet(SIMBRIEF_OFP_STORAGE_KEY);
-    try {
-      return stored ? JSON.parse(stored)?._importedAt || "" : "";
-    } catch {
-      return "";
-    }
-  });
-  const [copiedClearance, setCopiedClearance] = useState(false);
-  const [checklist, setChecklist] = useState({ status: true, fuel: false, navlog: false, journey: false });
-
-  const touchStartX = useRef(null);
-
-  const currentNav =
-    navigationItems.find((item) => item.id === activeTab) ||
-    navigationItems[0];
-
-  const flight = simbriefData || {
-    origin: { icao: "KEWR", iata: "EWR", name: "NEWARK/LIBERTY INTL", runway: "22R" },
-    destination: { icao: "KDCA", iata: "DCA", name: "WASHINGTON REAGAN", runway: "01" },
-    alternate: { icao: "KBWI", iata: "BWI", name: "BALTIMORE/WASHINGTON" },
-    flightNumber: "EUR4425",
-    airline: "EUR",
-    callsign: "EUR4425",
-    aircraftIcao: "A359",
-    aircraftName: "Airbus A350-900",
-    registration: "-",
-    route: "BIGGY4 BIGGY COPES MXE BAL",
-    cruiseAltitude: "35000",
+function fallbackFlight() {
+  return {
+    origin: { icao: "EDDL", iata: "DUS", name: "DUSSELDORF", runway: "23L", lat: 51.2895, lon: 6.7668 },
+    destination: { icao: "EDDF", iata: "FRA", name: "FRANKFURT MAIN", runway: "25R", lat: 50.0379, lon: 8.5622 },
+    alternates: [],
+    alternate: null,
+    flightNumber: "12S5",
+    airline: "",
+    callsign: "12S5",
+    aircraftIcao: "A320",
+    aircraftName: "Airbus A320",
+    registration: "G-FENX",
+    route: "N0378F230 COL6T COL T911 ROLIS ROLI5A",
+    cruiseAltitude: "23000",
     costIndex: "30",
     fuelUnits: "kgs",
-    tripFuel: "3515",
-    alternateFuel: "1182",
-    reserveFuel: "2327",
-    taxiFuel: "600",
-    minTakeoffFuel: "8012",
-    takeoffFuel: "7412",
-    rampFuel: "8012",
-    landingFuel: "3897",
-    zfw: "180000",
-    tow: "187412",
-    ldw: "183897",
-    maxZfw: "194000",
-    maxTow: "272000",
-    maxLdw: "207000",
-    payload: "40000",
-    pax: "0",
-    oew: "140000",
+    tripFuel: "2500",
+    alternateFuel: "700",
+    reserveFuel: "1200",
+    taxiFuel: "300",
+    minTakeoffFuel: "5200",
+    takeoffFuel: "5500",
+    rampFuel: "5800",
+    landingFuel: "3300",
+    zfw: "58000",
+    tow: "63500",
+    ldw: "61200",
+    maxZfw: "62500",
+    maxTow: "73500",
+    maxLdw: "64500",
+    payload: "15000",
+    pax: "160",
+    oew: "43000",
+    dow: "44500",
     scheduledOut: "",
+    estimatedOut: "",
+    scheduledOff: "",
+    estimatedOff: "",
+    scheduledOn: "",
+    estimatedOn: "",
     scheduledIn: "",
-    offBlockTime: "",
-    takeoffTime: "",
-    landingTime: "",
-    onBlockTime: "",
+    estimatedIn: "",
     tripTime: "01:18",
+    blockTime: "01:30",
     originMetar: "",
     originTaf: "",
     destinationMetar: "",
@@ -520,46 +514,170 @@ export default function App() {
     pdcText: "",
     navlog: [],
     notams: [],
+    airDistance: "",
+    groundDistance: "",
   };
+}
 
-  const importedOrigin = flight.origin?.icao || "KEWR";
-  const importedDestination = flight.destination?.icao || "KDCA";
-  const importedAlternate = flight.alternate?.icao || "KBWI";
-  const scheduledDepartureTime = formatTimeOrDash(flight.scheduledOut);
-  const headerDepartureTime = scheduledDepartureTime;
-  const headerArrivalTime = formatTimeOrDash(flight.scheduledIn);
-  const offBlockTime = formatTimeOrDash(flight.offBlockTime || flight.scheduledOut);
-  const takeoffTime = formatTimeOrDash(flight.takeoffTime || flight.scheduledOff);
-  const landingTime = formatTimeOrDash(flight.landingTime || flight.scheduledOn);
-  const onBlockTime = formatTimeOrDash(flight.onBlockTime || flight.scheduledIn);
-  const effectiveRoute = flight.route || "No route in OFP";
-  const effectiveAircraft = flight.aircraftIcao || flight.aircraftName || "-";
-  const effectiveFlight = flight.flightNumber || flight.callsign || "-";
-  const alternateAirports = Array.isArray(flight.alternates)
-    ? flight.alternates
-    : (flight.alternate?.icao ? [flight.alternate] : []);
-  const mapFixes = (flight.navlog || []).map((fix, index) => ({
+function getNavFixValue(fix, ...keys) {
+  return firstValue(...keys.map((key) => fix?.[key]));
+}
+
+function fixWind(fix) {
+  const dir = firstValue(fix?.wind_dir, fix?.wind_direction, fix?.wd, "");
+  const speed = firstValue(fix?.wind_spd, fix?.wind_speed, fix?.ws, "");
+  if (dir === "" && speed === "") return "-";
+  return `${dir || "---"}/${speed || "--"}`;
+}
+
+function fixAltitude(fix) {
+  const raw = firstValue(fix?.altitude_feet, fix?.altitude, fix?.flight_level, fix?.level);
+  if (raw === "") return "-";
+  const n = Number(raw);
+  if (Number.isFinite(n)) {
+    if (n >= 1000) return `FL${Math.round(n / 100)}`;
+    return String(Math.round(n));
+  }
+  return String(raw).toUpperCase();
+}
+
+function fixTemperature(fix) {
+  const value = firstValue(fix?.oat, fix?.temperature, fix?.temp, fix?.oat_temp);
+  return value === "" ? "-" : `${value}°C`;
+}
+
+function airportCode(airport) {
+  return String(firstValue(airport?.icao, airport?.iata, "")).toUpperCase();
+}
+
+function uniqueByCode(list) {
+  const seen = new Set();
+  return list.filter((item) => {
+    const code = airportCode(item);
+    if (!code || seen.has(code)) return false;
+    seen.add(code);
+    return true;
+  });
+}
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [dashboardPage, setDashboardPage] = useState(0);
+  const [weatherAirport, setWeatherAirport] = useState("origin");
+  const [selectedAirportCode, setSelectedAirportCode] = useState("");
+  const [mapSubTab, setMapSubTab] = useState("WX");
+  const [simbriefData, setSimbriefData] = useState(() => {
+    const raw = safeStorageGet(SIMBRIEF_OFP_STORAGE_KEY);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  });
+  const [simbriefInput, setSimbriefInput] = useState(() => safeStorageGet(SIMBRIEF_STORAGE_KEY));
+  const [showSimBriefModal, setShowSimBriefModal] = useState(false);
+  const [simbriefLoading, setSimbriefLoading] = useState(false);
+  const [simbriefError, setSimbriefError] = useState("");
+  const [weatherLive, setWeatherLive] = useState({});
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [fuelOrdered, setFuelOrdered] = useState(() => safeStorageGet(SIMBRIEF_FUEL_ORDER_KEY) === "true");
+  const [checklist, setChecklist] = useState({ status: false, fuel: false, navlog: false, journey: false });
+  const [copiedClearance, setCopiedClearance] = useState(false);
+  const [showRouteLabels, setShowRouteLabels] = useState(true);
+  const touchStartX = useRef(null);
+
+  const flight = simbriefData || fallbackFlight();
+
+  const alternates = useMemo(() => uniqueByCode(flight.alternates || (flight.alternate ? [flight.alternate] : [])), [flight.alternates, flight.alternate]);
+  const airportsForWeather = useMemo(
+    () => [
+      { id: "origin", label: airportCode(flight.origin), airport: flight.origin, metar: flight.originMetar, taf: flight.originTaf },
+      { id: "destination", label: airportCode(flight.destination), airport: flight.destination, metar: flight.destinationMetar, taf: flight.destinationTaf },
+      ...alternates.map((apt, index) => ({ id: `alternate-${index}`, label: airportCode(apt), airport: apt, metar: firstValue(apt.metar, index === 0 ? flight.alternateMetar : ""), taf: firstValue(apt.taf, index === 0 ? flight.alternateTaf : "") })),
+    ],
+    [flight, alternates]
+  );
+
+  const weatherSelection = airportsForWeather.find((entry) => entry.id === weatherAirport) || airportsForWeather[0];
+  const importedOrigin = airportCode(flight.origin) || "----";
+  const importedDestination = airportCode(flight.destination) || "----";
+  const effectiveFlight = firstValue(flight.flightNumber, flight.callsign, "-");
+  const effectiveRoute = firstValue(flight.route, "");
+  const effectiveAircraft = firstValue(flight.aircraftIcao, flight.aircraftName, "-");
+  const originIata = firstValue(flight.origin?.iata, importedOrigin);
+  const destinationIata = firstValue(flight.destination?.iata, importedDestination);
+
+  const navFixes = useMemo(() => (flight.navlog || []).map((fix, index) => ({
     ...fix,
-    ident: firstValue(fix.ident, fix.fix_ident, fix.name, `FIX${index + 1}`),
-    lat: fixLat(fix),
-    lon: fixLon(fix),
-  })).filter((fix) => fix.lat !== null && fix.lon !== null);
+    ident: getIdent(fix, `FIX${index + 1}`),
+    lat: getLat(fix),
+    lon: getLon(fix),
+  })), [flight.navlog]);
 
-  const weatherOptions = [
-    { id: "KEWR", code: importedOrigin, airport: flight.origin, metar: flight.originMetar, taf: flight.originTaf },
-    { id: "KDCA", code: importedDestination, airport: flight.destination, metar: flight.destinationMetar, taf: flight.destinationTaf },
-    ...alternateAirports.map((apt, index) => ({
-      id: `ALTN-${index}`,
-      code: apt.icao,
-      airport: apt,
-      metar: index === 0 ? flight.alternateMetar : "",
-      taf: index === 0 ? flight.alternateTaf : "",
-    })),
-  ];
+  const mapAirports = useMemo(
+    () => [
+      { ...flight.origin, kind: "origin", color: "green", label: importedOrigin },
+      { ...flight.destination, kind: "destination", color: "orange", label: importedDestination },
+      ...alternates.map((apt) => ({ ...apt, kind: "alternate", color: "purple", label: airportCode(apt) })),
+    ].filter((apt) => Number.isFinite(apt.lat) && Number.isFinite(apt.lon)),
+    [flight.origin, flight.destination, alternates, importedOrigin, importedDestination]
+  );
 
-  const weatherSelection =
-    weatherOptions.find((item) => item.id === weatherAirport || item.code === weatherAirport) ||
-    weatherOptions[0];
+  const mapPoints = useMemo(() => {
+    const route = navFixes.filter((fix) => Number.isFinite(fix.lat) && Number.isFinite(fix.lon));
+    const airportPoints = mapAirports.filter((apt) => Number.isFinite(apt.lat) && Number.isFinite(apt.lon));
+    return [...route, ...airportPoints];
+  }, [navFixes, mapAirports]);
+
+  useEffect(() => {
+    if (!selectedAirportCode) setSelectedAirportCode(importedOrigin);
+  }, [selectedAirportCode, importedOrigin]);
+
+  useEffect(() => {
+    if (!airportsForWeather.some((entry) => entry.id === weatherAirport)) setWeatherAirport("origin");
+  }, [airportsForWeather, weatherAirport]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const missing = (flight.alternates || []).filter((apt) => airportCode(apt) && (!Number.isFinite(apt.lat) || !Number.isFinite(apt.lon)));
+    if (!missing.length) return undefined;
+    (async () => {
+      const resolved = {};
+      await Promise.all(missing.map(async (apt) => {
+        try {
+          const code = airportCode(apt);
+          const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(code + " airport")}`, { headers: { Accept: "application/json" } });
+          if (!response.ok) return;
+          const data = await response.json();
+          const item = data?.[0];
+          const lat = Number(item?.lat);
+          const lon = Number(item?.lon);
+          if (Number.isFinite(lat) && Number.isFinite(lon)) resolved[code] = { lat, lon };
+        } catch {
+          // Keep the OFP data if geocoding is unavailable.
+        }
+      }));
+      if (cancelled || !Object.keys(resolved).length) return;
+      setSimbriefData((current) => {
+        if (!current) return current;
+        const nextAlternates = (current.alternates || []).map((apt) => resolved[airportCode(apt)] ? { ...apt, ...resolved[airportCode(apt)] } : apt);
+        const next = { ...current, alternates: nextAlternates, alternate: nextAlternates[0] || current.alternate };
+        safeStorageSet(SIMBRIEF_OFP_STORAGE_KEY, JSON.stringify(next));
+        return next;
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [simbriefData?.alternates]);
+
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key === "ArrowLeft") setDashboardPage(0);
+      if (event.key === "ArrowRight") setDashboardPage(1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   async function importSimBrief() {
     const user = simbriefInput.trim();
@@ -570,1680 +688,1165 @@ export default function App() {
 
     setSimbriefLoading(true);
     setSimbriefError("");
-    setCopiedClearance(false);
-
     try {
-      const numeric = /^\d+$/.test(user);
-      const param = numeric ? `userid=${encodeURIComponent(user)}` : `username=${encodeURIComponent(user)}`;
-      const url = `https://www.simbrief.com/api/xml.fetcher.php?${param}&json=v2`;
-      const response = await fetch(url, {
+      const param = /^\d+$/.test(user)
+        ? `userid=${encodeURIComponent(user)}`
+        : `username=${encodeURIComponent(user)}`;
+      const response = await fetch(`https://www.simbrief.com/api/xml.fetcher.php?${param}&json=v2`, {
         method: "GET",
         headers: { Accept: "application/json" },
         cache: "no-store",
       });
 
       const text = await response.text();
-      let payload;
+      let payload = null;
       try {
         payload = JSON.parse(text);
       } catch {
-        payload = null;
+        throw new Error("SimBrief hat keine gültige JSON-v2-Antwort geliefert.");
       }
 
-      if (!response.ok || !payload || payload.error) {
-        throw new Error(
-          payload?.error?.message ||
-            payload?.message ||
-            `SimBrief konnte den OFP nicht laden (HTTP ${response.status}).`
-        );
+      if (!response.ok || payload?.error) {
+        throw new Error(payload?.error?.message || payload?.message || `SimBrief HTTP ${response.status}`);
       }
 
       const normalized = normalizeSimBriefOFP(payload);
       normalized._importedAt = new Date().toISOString();
       normalized._simbriefUser = user;
-
       setSimbriefData(normalized);
-      setSelectedAirport({
-        icao: `${normalized.origin.icao}/${normalized.origin.iata || normalized.origin.icao}`,
-        name: normalized.origin.name,
-        role: "Departure",
-      });
-      setSimbriefUser(user);
-      setSimbriefImportedAt(normalized._importedAt);
+      setSimbriefInput(user);
+      setSelectedAirportCode(airportCode(normalized.origin));
+      setWeatherAirport("origin");
+      setFuelOrdered(false);
       safeStorageSet(SIMBRIEF_STORAGE_KEY, user);
       safeStorageSet(SIMBRIEF_OFP_STORAGE_KEY, JSON.stringify(normalized));
+      safeStorageSet(SIMBRIEF_FUEL_ORDER_KEY, "false");
+      setChecklist({ status: true, fuel: false, navlog: normalized.navlog?.length > 0, journey: false });
       setShowSimBriefModal(false);
+      await refreshLiveWeather(normalized);
     } catch (error) {
-      setSimbriefError(
-        error?.message ||
-          "Der SimBrief OFP konnte nicht geladen werden. Prüfe Username/Pilot ID und deine Internetverbindung."
-      );
+      setSimbriefError(error?.message || "SimBrief OFP konnte nicht geladen werden.");
     } finally {
       setSimbriefLoading(false);
     }
   }
 
+  async function refreshLiveWeather(plan = flight) {
+    const airports = uniqueByCode([
+      plan.origin,
+      plan.destination,
+      ...(plan.alternates || []),
+    ]).filter((apt) => airportCode(apt));
+    if (!airports.length) return;
+
+    setWeatherLoading(true);
+    try {
+      const next = {};
+      await Promise.all(airports.map(async (apt) => {
+        const code = airportCode(apt);
+        try {
+          const [metarRes, tafRes] = await Promise.all([
+            fetch(`https://aviationweather.gov/api/data/metar?ids=${encodeURIComponent(code)}`, { cache: "no-store" }),
+            fetch(`https://aviationweather.gov/api/data/taf?ids=${encodeURIComponent(code)}`, { cache: "no-store" }),
+          ]);
+          next[code] = {
+            metar: (await metarRes.text()).trim(),
+            taf: (await tafRes.text()).trim(),
+          };
+        } catch {
+          next[code] = { metar: "", taf: "" };
+        }
+      }));
+      setWeatherLive(next);
+    } finally {
+      setWeatherLoading(false);
+    }
+  }
+
   function clearImportedPlan() {
     setSimbriefData(null);
-    setSimbriefImportedAt("");
+    setFuelOrdered(false);
+    setWeatherLive({});
+    setChecklist({ status: false, fuel: false, navlog: false, journey: false });
     safeStorageSet(SIMBRIEF_OFP_STORAGE_KEY, "");
+    safeStorageSet(SIMBRIEF_FUEL_ORDER_KEY, "false");
   }
 
   async function copyClearance() {
-    const clearance = flight.pdcText ||
-      `${effectiveFlight}, cleared ${importedOrigin} to ${importedDestination}, ${effectiveRoute}, maintain ${flight.cruiseAltitude || "filed altitude"}.`;
+    const text = firstValue(
+      flight.pdcText,
+      `${effectiveFlight}, cleared ${importedOrigin} to ${importedDestination}, ${flight.route || "as filed"}, maintain ${flight.cruiseAltitude || "filed altitude"}.`
+    );
     try {
-      await navigator.clipboard.writeText(clearance);
+      await navigator.clipboard.writeText(text);
       setCopiedClearance(true);
-      window.setTimeout(() => setCopiedClearance(false), 1800);
+      window.setTimeout(() => setCopiedClearance(false), 1600);
     } catch {
-      setSimbriefError("Die Clearance konnte nicht in die Zwischenablage kopiert werden.");
+      setSimbriefError("Die Clearance konnte nicht kopiert werden.");
     }
   }
 
-  const handleTouchStart = (event) => {
-    touchStartX.current = event.touches[0].clientX;
-  };
+  function toggleChecklist(key) {
+    setChecklist((current) => ({ ...current, [key]: !current[key] }));
+  }
 
-  const handleTouchEnd = (event) => {
-    if (touchStartX.current === null) return;
+  function orderFuel() {
+    setFuelOrdered(true);
+    setChecklist((current) => ({ ...current, fuel: true }));
+    safeStorageSet(SIMBRIEF_FUEL_ORDER_KEY, "true");
+  }
 
-    const endX = event.changedTouches[0].clientX;
-    const difference = touchStartX.current - endX;
+  function handleTouchStart(event) {
+    touchStartX.current = event.touches?.[0]?.clientX ?? null;
+  }
 
-    if (Math.abs(difference) > 60) {
-      if (difference > 0) {
-        setDashboardPage(1);
-      } else {
-        setDashboardPage(0);
-      }
-    }
-
+  function handleTouchEnd(event) {
+    if (touchStartX.current == null) return;
+    const endX = event.changedTouches?.[0]?.clientX ?? touchStartX.current;
+    const delta = touchStartX.current - endX;
+    if (Math.abs(delta) > 60) setDashboardPage(delta > 0 ? 1 : 0);
     touchStartX.current = null;
-  };
+  }
+
+  const currentNav = navigationItems.find((item) => item.id === activeTab) || navigationItems[0];
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-[#E5E7EB] text-[#25282C]">
-
-      {/* =========================================================
-          TOP HEADER
-          ========================================================= */}
-
-      <header className="relative z-30 flex h-[58px] min-h-[58px] items-center border-b border-[#C4C6C8] bg-[#D1D3D4]">
-
+      <header className="relative z-50 flex h-[58px] min-h-[58px] items-center border-b border-[#C4C6C8] bg-[#D1D3D4]">
         <div className="flex h-full min-w-0 items-center overflow-hidden">
-
-          <button className="flex h-full w-[55px] shrink-0 items-center justify-center border-r border-[#C4C6C8] text-gray-700 hover:bg-black/5">
-            <X size={24} />
+          <button className="flex h-full w-[50px] shrink-0 items-center justify-center border-r border-[#C4C6C8] text-gray-700 hover:bg-black/5">
+            <X size={23} />
           </button>
-
-          <div className="flex h-full items-center whitespace-nowrap text-[13px] font-semibold">
-
-            <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">
-              {effectiveFlight}/01
-            </div>
-
-            <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">
-              {flight.registration || "-"}
-            </div>
-
-            <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">
-              {effectiveFlight}
-            </div>
-
-            <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">
-              {importedOrigin} ({headerDepartureTime}) - {importedDestination} ({headerArrivalTime})
-            </div>
-
-            <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">
-              OFP 1/0/1
-            </div>
-
-            <div className="px-2">
-              <span className="rounded-[3px] bg-[#65C529] px-2 py-[3px] text-[11px] font-bold text-[#173D0B]">
-                FINAL
-              </span>
-            </div>
-
+          <div className="flex h-full items-center whitespace-nowrap text-[12px] font-semibold">
+            <HeaderCell>{effectiveFlight}</HeaderCell>
+            <HeaderCell>{flight.registration || "-"}</HeaderCell>
+            <HeaderCell>{effectiveAircraft}</HeaderCell>
+            <HeaderCell>{importedOrigin} ({formatTime(flight.estimatedOut || flight.scheduledOut)}) - {importedDestination} ({formatTime(flight.estimatedIn || flight.scheduledIn)})</HeaderCell>
+            <HeaderCell>OFP 1/0/1</HeaderCell>
+            <div className="px-2"><span className="rounded-[3px] bg-[#65C529] px-2 py-[3px] text-[10px] font-bold text-[#173D0B]">FINAL</span></div>
           </div>
         </div>
-
-        <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-[19px] font-semibold">
-          {currentNav.label}
-        </div>
-
+        <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-[18px] font-semibold">{currentNav.label}</div>
         <div className="ml-auto flex h-full shrink-0 items-center">
-
-          <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5">
-            <Languages size={22} strokeWidth={1.8} />
-          </button>
-
-          <button
-            onClick={() => { setSimbriefInput(simbriefUser); setSimbriefError(""); setShowSimBriefModal(true); }}
-            title="Import latest SimBrief OFP"
-            className={`relative flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5 ${simbriefData ? "bg-black/[0.03]" : ""}`}
-          >
+          <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5"><Languages size={22} strokeWidth={1.8} /></button>
+          <button onClick={() => setShowSimBriefModal(true)} title="SimBrief" className="relative flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5">
             <Upload size={22} strokeWidth={1.8} />
             {simbriefData && <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#65C529]" />}
           </button>
-
-          <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5">
-            <Bell size={22} strokeWidth={1.8} />
-          </button>
-
-          <button className="flex h-full w-[52px] items-center justify-center text-gray-700 hover:bg-black/5">
-            <Grid3X3 size={22} strokeWidth={2} />
-          </button>
-
+          <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5"><Bell size={22} strokeWidth={1.8} /></button>
+          <button className="flex h-full w-12 items-center justify-center text-gray-700 hover:bg-black/5"><Grid3X3 size={22} strokeWidth={2} /></button>
         </div>
       </header>
 
       {showSimBriefModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4">
-          <div className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-[#C9CBCF] bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-200 bg-[#F1F1F1] px-5 py-4">
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-[520px] rounded-xl border border-[#D0D0D0] bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
               <div>
                 <h2 className="text-[19px] font-semibold">SimBrief Import</h2>
-                <p className="mt-1 text-[12px] text-gray-500">Import your latest generated OFP into virtual Lido.</p>
+                <p className="mt-1 text-[12px] text-gray-500">Import your latest generated OFP.</p>
               </div>
-              <button onClick={() => setShowSimBriefModal(false)} className="rounded-md p-2 text-gray-600 hover:bg-black/5">
-                <X size={20} />
-              </button>
+              <button onClick={() => setShowSimBriefModal(false)} className="rounded-md p-2 hover:bg-gray-100"><X size={19} /></button>
             </div>
-
             <div className="space-y-4 p-5">
-              <div>
-                <label className="mb-2 block text-[12px] font-semibold uppercase tracking-wide text-gray-500">
-                  SimBrief Username / Pilot ID
-                </label>
-                <input
-                  value={simbriefInput}
-                  onChange={(event) => setSimbriefInput(event.target.value)}
-                  onKeyDown={(event) => { if (event.key === "Enter") importSimBrief(); }}
-                  placeholder="e.g. username or 1234567"
-                  className="h-[48px] w-full rounded-md border border-gray-300 bg-white px-3 text-[15px] outline-none focus:border-[#526C9B] focus:ring-2 focus:ring-[#526C9B]/20"
-                  autoFocus
-                />
-              </div>
-
-              {simbriefError && (
-                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-3 text-[13px] text-red-700">
-                  {simbriefError}
-                </div>
-              )}
-
-              {simbriefData && !simbriefError && (
-                <div className="rounded-md border border-green-200 bg-green-50 px-3 py-3 text-[13px] text-green-800">
-                  Imported: {simbriefData.origin?.icao} → {simbriefData.destination?.icao} · {simbriefData.flightNumber || simbriefData.callsign}
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={clearImportedPlan}
-                  disabled={!simbriefData || simbriefLoading}
-                  className="h-[48px] rounded-md border border-gray-300 bg-white font-semibold disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Clear OFP
-                </button>
-                <button
-                  onClick={importSimBrief}
-                  disabled={simbriefLoading}
-                  className="flex h-[48px] items-center justify-center gap-2 rounded-md bg-[#0B1E48] font-semibold text-white hover:bg-[#10285C] disabled:opacity-60"
-                >
-                  {simbriefLoading && <Loader2 size={18} className="animate-spin" />}
+              <label className="block">
+                <span className="mb-2 block text-[12px] font-semibold text-gray-600">SimBrief Username / Pilot ID</span>
+                <input value={simbriefInput} onChange={(e) => setSimbriefInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && importSimBrief()} className="h-[46px] w-full rounded-md border border-gray-300 px-3 outline-none focus:border-[#526C9B]" placeholder="Username or Pilot ID" autoFocus />
+              </label>
+              {simbriefError && <div className="rounded-md bg-red-50 p-3 text-[12px] text-red-700">{simbriefError}</div>}
+              {simbriefData && <div className="rounded-md bg-[#F3F5F7] p-3 text-[12px] text-gray-600">Imported: <strong>{airportCode(simbriefData.origin)} → {airportCode(simbriefData.destination)}</strong> · {simbriefData.flightNumber || simbriefData.callsign}</div>}
+              <div className="flex gap-3">
+                <button onClick={clearImportedPlan} disabled={!simbriefData || simbriefLoading} className="h-[46px] rounded-md border border-gray-300 bg-white px-4 font-semibold hover:bg-gray-50 disabled:opacity-50">Clear OFP</button>
+                <button onClick={importSimBrief} disabled={simbriefLoading} className="flex h-[46px] flex-1 items-center justify-center gap-2 rounded-md bg-[#0B1E48] font-semibold text-white hover:bg-[#071330] disabled:opacity-60">
+                  {simbriefLoading ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
                   {simbriefLoading ? "Importing..." : "Import Latest OFP"}
                 </button>
               </div>
-
-              <p className="text-[11px] leading-5 text-gray-500">
-                The app only requests your latest OFP when you press Import. Your username and the last imported OFP are stored locally in this browser.
-              </p>
+              <p className="text-[11px] leading-5 text-gray-500">SimBrief data is requested only when you press Import. Live METAR/TAF is refreshed from aviationweather.gov for the imported airports.</p>
             </div>
           </div>
         </div>
       )}
 
-
-      {/* =========================================================
-          MAIN CONTENT
-          ========================================================= */}
-
       <main className="min-h-0 flex-1 overflow-hidden bg-[#E5E7EB]">
-
-        {/* ================= DASHBOARD TAB ================= */}
         {activeTab === "dashboard" && (
-          <div
-            className="h-full w-full overflow-hidden"
-            onTouchStart={handleTouchStart}
-            onTouchEnd={handleTouchEnd}
-          >
-
-            {/* PAGE 1 */}
-            <div
-              className={`h-full w-full overflow-y-auto ${
-                dashboardPage === 0 ? "block" : "hidden"
-              }`}
-            >
-              <div className="grid min-h-full grid-cols-1 gap-4 p-3 lg:grid-cols-3">
-
-                {/* FLIGHT INFO */}
+          <div className="relative h-full w-full" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+            <div className={`${dashboardPage === 0 ? "block" : "hidden"} h-full overflow-y-auto p-3`}>
+              <div className="grid min-h-full grid-cols-1 gap-4 lg:grid-cols-3">
                 <div className="flex flex-col gap-4">
-                  <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
-                    <div className="grid grid-cols-3 items-center">
-                      <span className="text-[13px] text-gray-500">{effectiveAircraft}</span>
-                      <span className="text-center text-[20px] font-bold">{effectiveFlight}</span>
-                      <span className="text-right text-[13px] text-gray-500">{flight.registration || "-"}</span>
-                    </div>
-                    <div className="mt-1 text-center">
-                      <span className="rounded-full bg-[#69C92D] px-4 py-1 text-[12px] font-bold text-[#17500D]">
-                        On time
-                      </span>
-                    </div>
-                    <div className="mt-1 text-center text-[13px]">(1h 18m)</div>
-                    <div className="my-1 flex items-center justify-center gap-5">
-                      <span className="text-[30px] font-bold">{importedOrigin}</span>
-                      <span className="text-[25px] text-gray-500">→</span>
-                      <span className="text-[30px] font-bold">{importedDestination}</span>
-                    </div>
-                    <div className="grid grid-cols-2 border-b border-gray-300 pb-2 text-center">
-                      <div className="border-r border-gray-300">
-                        <div className="text-[12px] text-gray-500">RWY {flight.origin?.runway || "—"}</div>
-                        <div className="mt-1 text-[12px]">{headerArrivalTime}</div>
-                      </div>
-                      <div>
-                        <div className="text-[12px] text-gray-500">RWY {flight.destination?.runway || "—"}</div>
-                        <div className="mt-1 text-[12px]">07 Sep 2023</div>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 py-2">
-                      <div className="border-r border-gray-300 px-2">
-                        <TimeRow label="STD" value={scheduledDepartureTime} />
-                        <TimeRow label="ETD" value={offBlockTime} />
-                      </div>
-                      <div className="px-2">
-                        <TimeRow label="STA" value={headerArrivalTime} />
-                        <TimeRow label="ETA" value={headerArrivalTime} />
-                      </div>
-                    </div>
-                    <div className="pb-1 text-center text-[12px] text-gray-500">- CTOT</div>
-                    <div className="mb-2 grid grid-cols-3 gap-2 rounded-md bg-white px-2 py-2 text-center">
-                      <div>
-                        <div className="text-[10px] uppercase text-gray-500">OFF-BLOCK</div>
-                        <div className="text-[13px] font-semibold">{offBlockTime}</div>
-                      </div>
-                      <div className="border-x border-gray-200">
-                        <div className="text-[10px] uppercase text-gray-500">TAKEOFF</div>
-                        <div className="text-[13px] font-semibold">{takeoffTime}</div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] uppercase text-gray-500">ON-BLOCK</div>
-                        <div className="text-[13px] font-semibold">{onBlockTime}</div>
-                      </div>
-                    </div>
-                    <button className="mt-2 h-[51px] w-full rounded-md bg-[#0B1E48] text-[16px] font-semibold text-white">
-                      Accept Flight
-                    </button>
-                  </section>
-
-                  {/* CHECKLIST */}
-                  <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
-                    <h2 className="mb-3 text-center text-[19px] font-semibold">
-                      Flight Checklist
-                    </h2>
-                    <div className="rounded-md bg-white px-3">
-                      <ChecklistRow
-                        label="Status:"
-                        value={checklist.status ? "Final" : "Pending"}
-                        checked={checklist.status}
-                        onClick={() => setChecklist((value) => ({ ...value, status: !value.status }))}
-                      />
-                      <ChecklistRow
-                        label="Fuel:"
-                        value={checklist.fuel ? "Loaded" : "Not ordered"}
-                        checked={checklist.fuel}
-                        onClick={() => setChecklist((value) => ({ ...value, fuel: !value.fuel }))}
-                      />
-                      <ChecklistRow
-                        label="NavLog:"
-                        value={checklist.navlog ? "Loaded" : "Pending"}
-                        checked={checklist.navlog}
-                        onClick={() => setChecklist((value) => ({ ...value, navlog: !value.navlog }))}
-                      />
-                      <ChecklistRow
-                        label="Journey Log:"
-                        value={checklist.journey ? "Ready" : "Pending"}
-                        checked={checklist.journey}
-                        onClick={() => setChecklist((value) => ({ ...value, journey: !value.journey }))}
-                        last
-                      />
-                    </div>
-                  </section>
+                  <FlightInfoCard flight={flight} origin={importedOrigin} destination={importedDestination} effectiveFlight={effectiveFlight} aircraft={effectiveAircraft} />
+                  <ChecklistCard checklist={checklist} onToggle={toggleChecklist} fuelOrdered={fuelOrdered} navlogLoaded={navFixes.length > 0} />
                 </div>
-
-                {/* ROUTE */}
-                <div>
-                  <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
-                    <h2 className="text-center text-[19px] font-semibold">Route</h2>
-                    <div className="mt-2 overflow-hidden rounded-md bg-white">
-                      <div className="h-[360px]">
-                        <DynamicRoutePreview flight={flight} compact />
-                      </div>
-                      <div className="px-3 py-3">
-                        <p className="text-[12px] leading-[1.5]">
-                          {importedOrigin} - {effectiveRoute} - {importedDestination}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 pt-3">
-                      <button onClick={() => setActiveTab("map")} className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">
-                        Go to Map
-                      </button>
-                      <button className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">
-                        Open in mPilot
-                      </button>
-                    </div>
-                  </section>
-                </div>
-
-                {/* WEATHER */}
-                <div>
-                  <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
-                    <h2 className="text-center text-[19px] font-semibold">Weather</h2>
-                    <AirportTabs
-  selected={weatherAirport}
-  onChange={setWeatherAirport}
-  options={weatherOptions.map((item) => ({ id: item.id, label: item.code }))}
- />
-                    <div className="mt-3 overflow-hidden rounded-md bg-white">
-                      <div className="border-b border-gray-200 px-3 py-3">
-                        <div className="text-[16px] font-bold">{weatherSelection.airport?.name || weatherSelection.code || "AIRPORT"}</div>
-                        <div className="text-[12px] text-gray-500">{weatherSelection.code}</div>
-                      </div>
-                      <div className="space-y-2 px-3 py-3">
-                        <WeatherRow label="Ceiling:" value="-" />
-                        <WeatherRow label="Visibility:" value="9999 m" />
-                        <WeatherRow label="HWC:" value="CALM" />
-                        <WeatherRow label="CWC:" value="CALM" />
-                      </div>
-                      <div className="border-t border-gray-200 px-3 py-3">
-                        <div className="mb-1 text-[12px] text-gray-500">METAR: 15m old</div>
-                        <pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">
-{weatherSelection.metar || "No METAR available in imported OFP"}
-                        </pre>
-                      </div>
-                      <div className="border-t border-gray-200 px-3 py-3">
-                        <div className="mb-1 text-[12px] text-gray-500">TAF: Issued at 07 Sep 2023, 08:33</div>
-                        <pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">
-{weatherSelection.taf || "No TAF available in imported OFP"}
-                        </pre>
-                      </div>
-                    </div>
-                    <button className="mt-3 h-[47px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">
-                      View Weather Charts
-                    </button>
-                  </section>
-                </div>
-
+                <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
+                  <h2 className="text-center text-[19px] font-semibold">Route</h2>
+                  <div className="mt-2 overflow-hidden rounded-md bg-white">
+                    <div className="h-[360px]"><DynamicMap flight={flight} navFixes={navFixes} airports={mapAirports} compact showLabels={showRouteLabels} onToggleLabels={() => setShowRouteLabels((v) => !v)} /></div>
+                    <div className="border-t border-gray-200 px-3 py-3"><p className="break-words text-[12px] leading-[1.5]">{importedOrigin} - {effectiveRoute || "NO ROUTE"} - {importedDestination}</p></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 pt-3">
+                    <button onClick={() => setActiveTab("map")} className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Go to Map</button>
+                    <button className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open in mPilot</button>
+                  </div>
+                </section>
+                <DashboardWeatherCard airports={airportsForWeather} selected={weatherAirport} onChange={setWeatherAirport} live={weatherLive} loading={weatherLoading} onRefresh={() => refreshLiveWeather(flight)} />
               </div>
             </div>
 
-            {/* PAGE 2 */}
-            <div
-              className={`h-full w-full overflow-y-auto ${
-                dashboardPage === 1 ? "block" : "hidden"
-              }`}
-            >
-              <div className="grid min-h-full grid-cols-1 gap-4 p-3 lg:grid-cols-3">
-
-                {/* NOTAM */}
-                <div>
-                  <section className="flex h-full flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
-                    <h2 className="text-center text-[19px] font-semibold">NOTAM</h2>
-                    <AirportTabs
-  selected={weatherAirport}
-  onChange={setWeatherAirport}
-  options={weatherOptions.map((item) => ({ id: item.id, label: item.code }))}
- />
-                    <div className="mt-3 flex-1 overflow-hidden rounded-md bg-white">
-                      <div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">
-                        RUNWAY
-                      </div>
-                      <NotamItem
-                        text={
-                          <>
-                            1A3305/23 - 05 Sep 2023, 18:02 - 09 Oct 2023, 18:02<br /><br />
-                            EWR SID NEWARK LIBERTY INTL, NEWARK, NJ.<br />
-                            NEWARK FOUR DEPARTURE...<br />
-                            DEPARTING RWYS 4L/R AND 22L/R:<br />
-                            BIGGY DEPARTURES: NA EXCEPT FOR AIRCRAFT EQUIPPED WITH SUITABLE <strong>RNAV</strong> SYSTEM WITH GPS.<br />
-                            DEPARTING RWY 22L/R: LANNA, PARKE DEPARTURES: NA EXCEPT FOR AIRCRAFT EQUIPPED WITH SUITABLE <strong>RNAV</strong> SYSTEM WITH GPS, SBJ VOR OUT OF SERVICE.
-                          </>
-                        }
-                      />
-                      <NotamItem
-                        last
-                        text={
-                          <>
-                            1A3263/23 - 30 Aug 2023, 12:16 - 19 Sep 2023, 23:59<br /><br />
-                            EWR <strong>RWY 04L PAPI U/S</strong>
-                          </>
-                        }
-                      />
-                    </div>
-                    <button className="mt-3 h-[50px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">
-                      View NOTAMs for All Airports
-                    </button>
-                  </section>
-                </div>
-
-                {/* FUEL + DOCUMENTS */}
+            <div className={`${dashboardPage === 1 ? "block" : "hidden"} h-full overflow-y-auto p-3`}>
+              <div className="grid min-h-full grid-cols-1 gap-4 lg:grid-cols-3">
+                <DashboardNotamCard flight={flight} airports={airportsForWeather} selected={weatherAirport} onChange={setWeatherAirport} live={weatherLive} loading={weatherLoading} />
                 <div className="flex flex-col gap-4">
-                  <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
-                    <h2 className="text-center text-[19px] font-semibold">Fuel</h2>
-                    <div className="mt-3 overflow-hidden rounded-md bg-white">
-                      <div className="flex items-center justify-between bg-[#F5F5F5] px-3 py-3">
-                        <span className="text-[15px] text-gray-600">Planned Fuel (OFP):</span>
-                        <strong className="text-[20px]">{formatWeight(flight.rampFuel || flight.takeoffFuel, flight.fuelUnits)}</strong>
-                      </div>
-                      <div className="space-y-1 px-3 py-3">
-                        <FuelRow label="PLN ZFW:" value={formatWeight(flight.zfw, flight.fuelUnits)} />
-                        <FuelRow label="PLN TOW:" value={formatWeight(flight.tow, flight.fuelUnits)} />
-                        <FuelRow label="PLN LAW:" value={formatWeight(flight.ldw, flight.fuelUnits)} />
-                        <FuelRow label="MTOW:" value={formatWeight(flight.maxTow, flight.fuelUnits)} />
-                        <FuelRow label="MLAW:" value={formatWeight(flight.maxLdw, flight.fuelUnits)} />
-                        <FuelRow label="Max. Discretionary Fuel Cap:" value={formatWeight(flight.extraFuel, flight.fuelUnits)} />
-                      </div>
-                    </div>
-                    <button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">
-                      Open Fuel
-                    </button>
-                  </section>
-
-                  <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
-                    <h2 className="text-center text-[19px] font-semibold">Additional Documents</h2>
-                    <div className="mt-3 overflow-hidden rounded-md bg-white">
-                      <DocumentRow title="CREW NAMES" date="- 30 Aug 2022 - 01 Jan 9999" />
-                      <DocumentRow title="MEL Restrictions examples" date="- 30 Nov 2021 - 01 Jan 9999" />
-                      <DocumentRow title="Welcome to Lido Flight 4D" date="- 30 Nov 2021 - 01 Jan 9999" last />
-                    </div>
-                    <button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">
-                      View All Documents
-                    </button>
-                  </section>
+                  <FuelSummaryCard flight={flight} fuelOrdered={fuelOrdered} />
+                  <DocumentsCard />
                 </div>
-
-                {/* CONTACT */}
-                <div>
-                  <section className="flex h-full flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
-                    <h2 className="text-center text-[19px] font-semibold">Contact Information</h2>
-                    <div className="mt-3 flex flex-1 flex-col overflow-hidden rounded-md bg-white">
-                      <div>
-                        <div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">CREW</div>
-                        <div className="px-3 py-3">
-                          <div className="text-[13px] text-gray-600">Pilot in Command / Captain</div>
-                          <div className="mt-1 text-[14px] font-semibold">J.DOE</div>
-                        </div>
-                      </div>
-                      <div>
-                        <div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">DISPATCHER</div>
-                        <div className="flex items-center justify-between px-3 py-3">
-                          <div>
-                            <div className="text-[14px] font-semibold">A. O.S</div>
-                            <div className="text-[12px] text-gray-600">telno</div>
-                          </div>
-                          <div className="flex gap-2">
-                            <button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white">
-                              <Phone size={18} />
-                            </button>
-                            <button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white">
-                              <MessageSquare size={18} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="border-t border-gray-200 px-3 py-4 text-[13px] text-gray-600">
-                        No remarks available
-                      </div>
-                    </div>
-                  </section>
-                </div>
-
+                <ContactCard />
               </div>
             </div>
 
+            <div className="pointer-events-none absolute bottom-2 left-0 right-0 z-30 flex items-center justify-center gap-2">
+              <button onClick={() => setDashboardPage(0)} className={`pointer-events-auto h-[9px] w-[9px] rounded-full ${dashboardPage === 0 ? "bg-[#6C7074]" : "bg-[#C7C9CB]"}`} />
+              <button onClick={() => setDashboardPage(1)} className={`pointer-events-auto h-[9px] w-[9px] rounded-full ${dashboardPage === 1 ? "bg-[#6C7074]" : "bg-[#C7C9CB]"}`} />
+            </div>
           </div>
         )}
 
-
-        {/* ================= BRIEFING TAB ================= */}
         {activeTab === "briefing" && (
           <div className="h-full overflow-y-auto bg-[#E5E7EB] px-3 py-3">
-            <div className="mx-auto max-w-[1100px] space-y-3">
-
-              {/* HEADER */}
+            <div className="mx-auto max-w-[1100px] space-y-3 pb-4">
               <section className="overflow-hidden rounded-xl border border-[#D5D5D5] bg-white">
-                <div className="flex h-[50px] items-center justify-center bg-[#EEEEEE] text-[20px] font-semibold">
-                  {importedOrigin}/{flight.origin?.iata || importedOrigin} <span className="mx-3 text-gray-400">···</span> <span className="text-gray-500">✈</span> <span className="mx-3 text-gray-400">···</span> {importedDestination}/{flight.destination?.iata || importedDestination}
-                </div>
+                <div className="flex h-[50px] items-center justify-center bg-[#EEEEEE] text-[20px] font-semibold">{importedOrigin}/{originIata} <span className="mx-3 text-gray-400">···</span><span className="text-gray-500">✈</span><span className="mx-3 text-gray-400">···</span>{importedDestination}/{destinationIata}</div>
                 <div className="grid grid-cols-2 gap-y-5 px-5 py-6 sm:grid-cols-5">
                   <BriefingValue label="ATC" value={effectiveFlight} />
-                  <BriefingValue label="STD" value={headerDepartureTime} />
-                  <BriefingValue label="STA" value={headerArrivalTime} />
+                  <BriefingValue label="STD" value={formatTime(flight.scheduledOut)} />
+                  <BriefingValue label="STA" value={formatTime(flight.scheduledIn)} />
                   <BriefingValue label="A/C TYPE" value={effectiveAircraft} />
                   <BriefingValue label="REG NO" value={flight.registration || "-"} />
                 </div>
               </section>
 
-              {/* PARAMETERS */}
               <section className="rounded-xl border border-[#D5D5D5] bg-white px-5 py-6">
                 <div className="grid grid-cols-2 gap-x-8 gap-y-7 sm:grid-cols-3 lg:grid-cols-6">
-                  <BriefingValue label="CRZ SYS" value={flight.costIndex ? `CI${flight.costIndex}` : "-"} />
-                  <BriefingValue label="GND DIST" value={firstValue(getPath(flight, "general.gc_distance"), getPath(flight, "general.route_distance"), "-")} />
-                  <BriefingValue label="AIR DIST" value={firstValue(getPath(flight, "general.air_distance"), "-")} />
-                  <BriefingValue label="TOC WIND" value={`${getPath(flight, "general.avg_wind_dir", "")}/${getPath(flight, "general.avg_wind_spd", "") || "-"}`} />
-                  <BriefingValue label="AVG WIND" value="234/014" />
-                  <BriefingValue label="AVG W/C" value={getPath(flight, "general.avg_wind_comp", "-")} />
-                  <BriefingValue label="IALT" value="220" />
-                  <BriefingValue label="TOC ISA" value={getPath(flight, "general.avg_temp_dev", "-")} />
-                  <BriefingValue label="AVG FF KGS/HR" value={getPath(flight, "fuel.avg_fuel_flow", "-")} />
-                  <BriefingValue label="FUEL BIAS" value="P00.0" />
-                  <BriefingValue label="TKOF ALTN" value="-" />
+                  <BriefingValue label="CRZ SYS" value={flight.costIndex ? `CI${flight.costIndex}` : firstValue(flight.cruiseProfile, "-")} />
+                  <BriefingValue label="GND DIST" value={firstValue(flight.groundDistance, "-")} />
+                  <BriefingValue label="AIR DIST" value={firstValue(flight.airDistance, "-")} />
+                  <BriefingValue label="TOC WIND" value={flight.avgWindDir ? `${flight.avgWindDir}/${flight.avgWindSpeed || "-"}` : "-"} />
+                  <BriefingValue label="AVG W/C" value={flight.avgWindComponent || "-"} />
+                  <BriefingValue label="AVG FF" value={flight.avgFuelFlow ? `${formatNumber(flight.avgFuelFlow)} ${flight.fuelUnits}` : "-"} />
+                  <BriefingValue label="CRZ ALT" value={formatAltitudeValue(flight.cruiseAltitude)} />
+                  <BriefingValue label="ETD" value={formatTime(flight.estimatedOut)} />
+                  <BriefingValue label="OFF-BLOCK" value={formatTime(flight.estimatedOut)} />
+                  <BriefingValue label="TAKEOFF" value={formatTime(flight.estimatedOff)} />
+                  <BriefingValue label="LANDING" value={formatTime(flight.estimatedOn)} />
+                  <BriefingValue label="ON-BLOCK" value={formatTime(flight.estimatedIn)} />
                 </div>
               </section>
 
-              {/* WEIGHT */}
               <section className="overflow-hidden rounded-xl border border-[#D5D5D5] bg-white">
-                <div className="grid grid-cols-[1.2fr_1fr_1fr_1.1fr_1.1fr] bg-[#E9E9E9] px-5 py-3 text-[15px] font-semibold text-gray-600">
-                  <span>Weight(kg)</span>
-                  <span>Planned</span>
-                  <span>Actual</span>
-                  <span>Operational Limit</span>
-                  <span>Structural Limit</span>
-                </div>
-                <div className="px-5 py-4">
-                  <WeightRow name="DOW" planned={formatWeight(flight.oew, flight.fuelUnits)} />
-                  <WeightRow name="LOAD" planned={formatWeight(flight.payload, flight.fuelUnits)} />
-                  <WeightRow name="ZFW" planned={formatWeight(flight.zfw, flight.fuelUnits)} structural={formatWeight(flight.maxZfw, flight.fuelUnits)} />
-                  <WeightRow name="TOW" planned={formatWeight(flight.tow, flight.fuelUnits)} operational={formatWeight(flight.maxTow, flight.fuelUnits)} structural={formatWeight(flight.maxTow, flight.fuelUnits)} />
-                  <WeightRow name="LW" planned={formatWeight(flight.ldw, flight.fuelUnits)} operational={formatWeight(flight.maxLdw, flight.fuelUnits)} structural={formatWeight(flight.maxLdw, flight.fuelUnits)} />
-                </div>
-              </section>
-
-              {/* FUEL */}
-              <section className="overflow-hidden rounded-xl border border-[#D5D5D5] bg-white">
-                <div className="flex items-center justify-between bg-[#E9E9E9] px-5 py-3">
-                  <h2 className="text-[17px] font-semibold">Fuel</h2>
-                  <button className="rounded-md border border-gray-300 bg-[#F4F4F4] px-5 py-2 text-[14px] shadow-sm hover:bg-gray-100">
-                    Reset
-                  </button>
-                </div>
-
+                <div className="grid grid-cols-[1.2fr_1fr_1fr_1.1fr_1.1fr] bg-[#E9E9E9] px-5 py-3 text-[14px] font-semibold text-gray-600"><span>Weight (kg)</span><span>Planned</span><span>Actual</span><span>Operational Limit</span><span>Structural Limit</span></div>
                 <div className="px-5 py-2">
-                  <div className="grid grid-cols-[1fr_255px_95px] items-center py-2 text-right text-[14px] text-gray-500">
-                    <span></span>
-                    <span>HH:MM</span>
-                    <span>kg</span>
-                  </div>
-
-                  <FuelLine label="Trip" time={flight.tripTime} fuel={formatNumber(flight.tripFuel)} />
-                  <FuelLine label="MINCONT" time={formatDuration(flight.contingencyFuel ? 240 : 0)} fuel={formatNumber(flight.contingencyFuel)} />
-
-                  {/* ALTERNATE */}
-                  <div className="grid grid-cols-[1fr_255px_95px] items-center py-3">
-                    <div className="flex items-center">
-                      <span className="text-[15px]">Alternate</span>
-                      <select className="ml-auto mr-3 h-[46px] w-[255px] appearance-none rounded-md border-0 bg-[#DCDCDC] px-3 text-[14px] text-gray-700 outline-none">
-                        <option>KBWI - BALTIMORE/W...</option>
-                        <option>KRIC - RICHMOND</option>
-                        <option>KPHL - PHILADELPHIA</option>
-                      </select>
-                    </div>
-                    <span className="text-right text-[15px]">00:12</span>
-                    <span className="text-right text-[15px]">1182</span>
-                  </div>
-
-                  <FuelLine label="Final Reserve" time={getPath(flight, "times.reserve_time", "1800") ? formatDuration(getPath(flight, "times.reserve_time", "1800")) : "00:30"} fuel={formatNumber(flight.reserveFuel)} />
-                  <FuelLine label="ETOPS" time="00:00" fuel="0" />
-
-                  <div className="my-2 border-t border-gray-300" />
-                  <FuelLine label="Takeoff Fuel" time={formatDuration((toNumber(flight.tripFuel)+toNumber(flight.reserveFuel)+toNumber(flight.alternateFuel)) * 0)} fuel={formatNumber(flight.takeoffFuel || flight.minTakeoffFuel)} bold />
-
-                  {/* TAXI */}
-                  <div className="grid grid-cols-[1fr_255px_95px] items-center py-3">
-                    <div className="flex items-center">
-                      <span className="text-[15px]">Taxi Fuel</span>
-                      <select className="ml-auto mr-3 h-[46px] w-[255px] appearance-none rounded-md border-0 bg-[#DCDCDC] px-3 text-[14px] text-gray-500 outline-none">
-                        <option>Select Reason</option>
-                        <option>Long taxi</option>
-                        <option>De-icing</option>
-                        <option>APU operation</option>
-                      </select>
-                    </div>
-                    <div className="rounded-md bg-[#DCDCDC] py-3 text-center text-[15px]">00:15</div>
-                    <div className="ml-3 rounded-md bg-[#DCDCDC] py-3 text-center text-[15px]">600</div>
-                  </div>
-
-                  <div className="my-2 border-t border-gray-300" />
-
-                  <div className="flex items-center justify-between py-3">
-                    <span className="text-[16px] font-semibold">Minimum Block Fuel</span>
-                    <span className="text-[15px] font-semibold">{formatNumber(flight.minTakeoffFuel || flight.rampFuel || flight.takeoffFuel)}</span>
-                  </div>
-
-                  {/* DISCRETIONARY */}
-                  <div className="grid grid-cols-[1fr_255px_95px] items-center py-3">
-                    <div className="flex items-center">
-                      <span className="text-[15px]">Discretionary Fuel</span>
-                      <select className="ml-auto mr-3 h-[46px] w-[255px] appearance-none rounded-md border-0 bg-[#E1E1E1] px-3 text-[14px] text-gray-400 outline-none">
-                        <option>Select Reason</option>
-                        <option>Company policy</option>
-                        <option>ATC delay</option>
-                        <option>Weather</option>
-                      </select>
-                    </div>
-                    <div className="rounded-md bg-[#DCDCDC] py-3 text-center text-[15px]">00:00</div>
-                    <div className="ml-3 rounded-md bg-[#DCDCDC] py-3 text-center text-[15px]">0</div>
-                  </div>
-
-                  <div className="text-[13px] leading-6">
-                    <div>Maximum Discretionary: {formatWeight(flight.extraFuel, flight.fuelUnits)}, LAND</div>
-                    <div>no tankering recommended LOSS: 7 USD/TO</div>
-                  </div>
-
-                  <div className="my-3 border-t border-gray-300" />
-
-                  <div className="space-y-1 text-[14px]">
-                    <div>Estimated Landing Fuel: {formatWeight(flight.landingFuel, flight.fuelUnits)} ({flight.tripTime})</div>
-                    <div>Total Reserve Fuel: {formatWeight(flight.reserveFuel, flight.fuelUnits)}</div>
-                  </div>
-
-                  <div className="my-3 border-t border-gray-300" />
-
-                  <label className="flex cursor-pointer items-center gap-3 py-2">
-                    <input type="checkbox" className="h-7 w-7 appearance-none rounded-md border-2 border-gray-700 bg-white checked:bg-[#0B1E48]" />
-                    <span className="text-[16px] font-semibold">Fuel Truck Standby</span>
-                  </label>
-                </div>
-
-                {/* BLOCK FUEL FOOTER */}
-                <div className="mt-2 flex items-center gap-3 bg-[#5575A5] px-5 py-3 text-white">
-                  <span className="text-[16px] font-semibold">Block Fuel</span>
-                  <div className="ml-auto flex items-center gap-3">
-                    <div className="flex h-[46px] items-center rounded-md bg-white px-4 text-gray-800">
-                      <span className="min-w-[110px] text-right text-[16px] font-semibold">{formatNumber(flight.rampFuel || flight.takeoffFuel || flight.minTakeoffFuel)}</span>
-                      <span className="ml-3 text-[14px]">kg</span>
-                    </div>
-                    <button className="h-[46px] rounded-md bg-[#0B1E48] px-9 text-[17px] font-semibold text-white shadow-sm hover:bg-[#071330]">
-                      Order
-                    </button>
-                  </div>
+                  <WeightRow name="DOW" planned={flight.dow || flight.oew} />
+                  <WeightRow name="LOAD" planned={flight.payload} actual="" />
+                  <WeightRow name="ZFW" planned={flight.zfw} structural={flight.maxZfw} />
+                  <WeightRow name="TOW" planned={flight.tow} operational={flight.maxTow} structural={flight.maxTow} />
+                  <WeightRow name="LW" planned={flight.ldw} operational={flight.maxLdw} structural={flight.maxLdw} />
                 </div>
               </section>
 
+              <section className="overflow-hidden rounded-xl border border-[#D5D5D5] bg-white">
+                <div className="flex items-center justify-between bg-[#E9E9E9] px-5 py-3"><h2 className="text-[17px] font-semibold">Fuel</h2><button onClick={() => { setFuelOrdered(false); setChecklist((c) => ({ ...c, fuel: false })); safeStorageSet(SIMBRIEF_FUEL_ORDER_KEY, "false"); }} className="rounded-md border border-gray-300 bg-[#F4F4F4] px-5 py-2 text-[13px] shadow-sm hover:bg-gray-100">Reset</button></div>
+                <div className="px-5 py-2">
+                  <FuelLine label="Taxi" time={flight.taxiFuel ? "--:--" : "-"} fuel={flight.taxiFuel} />
+                  <FuelLine label="Trip" time={flight.tripTime} fuel={flight.tripFuel} />
+                  <FuelLine label="MINCONT / Contingency" time={formatFuelTime(flight.contingencyFuel)} fuel={flight.contingencyFuel} />
+                  <FuelLine label="Alternate" time={"--:--"} fuel={flight.alternateFuel} />
+                  <FuelLine label="Final Reserve" time={"--:--"} fuel={flight.reserveFuel} />
+                  <FuelLine label="ETOPS" time={"--:--"} fuel={flight.etopsFuel || 0} />
+                  <FuelLine label="Extra" time={"--:--"} fuel={flight.extraFuel || 0} />
+                  <div className="my-2 border-t border-gray-300" />
+                  <FuelLine label="Takeoff Fuel" time={flight.tripTime !== "--:--" ? flight.blockTime : "--:--"} fuel={flight.takeoffFuel} bold />
+                  <FuelLine label="Landing Fuel" time={flight.tripTime} fuel={flight.landingFuel} />
+                  <div className="my-2 border-t border-gray-300" />
+                  <div className="flex items-center justify-between py-3"><span className="text-[16px] font-semibold">Minimum Block Fuel</span><span className="text-[15px] font-semibold">{flight.minTakeoffFuel || flight.rampFuel || "-"}</span></div>
+                </div>
+                <div className="flex items-center gap-3 bg-[#5575A5] px-5 py-3 text-white"><span className="text-[16px] font-semibold">Block Fuel</span><div className="ml-auto flex items-center gap-3"><div className="flex h-[46px] items-center rounded-md bg-white px-4 text-gray-800"><span className="min-w-[100px] text-right text-[16px] font-semibold">{flight.rampFuel || flight.takeoffFuel || "-"}</span><span className="ml-3 text-[14px]">kg</span></div><button onClick={orderFuel} className="h-[46px] rounded-md bg-[#0B1E48] px-8 text-[16px] font-semibold text-white shadow-sm hover:bg-[#071330]">{fuelOrdered ? "Ordered" : "Order"}</button></div></div>
+              </section>
+
+              <section className="overflow-hidden rounded-xl border border-[#D5D5D5] bg-white">
+                <div className="border-b border-gray-200 bg-[#E9E9E9] px-5 py-3 text-[16px] font-semibold">Alternates</div>
+                <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {alternates.length ? alternates.map((apt, index) => <AlternateCard key={airportCode(apt) || index} airport={apt} index={index} weatherLive={weatherLive[airportCode(apt)]} />) : <div className="col-span-full py-6 text-center text-[13px] text-gray-500">No alternates in imported OFP</div>}
+                </div>
+              </section>
             </div>
           </div>
         )}
 
-
-        {/* ================= MAP TAB ================= */}
         {activeTab === "map" && (
-          <div className="flex h-full w-full">
-
-            {/* LEFT SIDEBAR - AIRPORT LIST */}
-            <aside className="w-[300px] shrink-0 border-r border-[#C4C6C8] bg-[#F4F4F4] overflow-y-auto">
-              <div>
-                <button className="flex w-full items-center justify-between px-4 py-3 font-semibold text-[15px] text-[#25282C] border-b border-[#E0E0E0]">
-                  <span>Main Airport</span>
-                  <ChevronDown size={20} className="text-gray-500" />
-                </button>
-
-                <div className="divide-y divide-[#E0E0E0]">
-                  {[
-                    { icao: `${importedOrigin}/${flight.origin?.iata || importedOrigin}`, name: flight.origin?.name || "DEPARTURE", role: "Departure", runway: flight.origin?.runway },
-                    { icao: `${importedDestination}/${flight.destination?.iata || importedDestination}`, name: flight.destination?.name || "ARRIVAL", role: "Arrival", runway: flight.destination?.runway },
-                    ...alternateAirports.map((apt, index) => ({
-                      icao: `${apt.icao}/${apt.iata || apt.icao}`,
-                      name: apt.name || apt.icao,
-                      role: `Arrival Alternate ${index + 1}`,
-                      runway: apt.runway,
-                    })),
-                  ].map((apt) => {
-                    const isSelected = selectedAirport.icao === apt.icao;
-                    return (
-                      <button
-                        key={apt.icao}
-                        onClick={() => setSelectedAirport(apt)}
-                        className={`flex w-full flex-col text-left px-5 py-3 transition-colors ${
-                          isSelected
-                            ? "bg-[#7A8EA8] text-white"
-                            : "hover:bg-black/5 text-gray-800"
-                        }`}
-                      >
-                        <span className="text-[15px] font-bold leading-tight">
-                          {apt.icao}
-                        </span>
-                        <span
-                          className={`text-[12px] mt-0.5 ${
-                            isSelected ? "text-gray-200" : "text-gray-500"
-                          }`}
-                        >
-                          {apt.role}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+          <div className="flex h-full w-full flex-col md:flex-row">
+            <aside className="w-full shrink-0 overflow-y-auto border-b border-[#C4C6C8] bg-[#F4F4F4] md:w-[310px] md:border-b-0 md:border-r">
+              <div className="border-b border-[#D0D0D0] px-4 py-3 text-[15px] font-semibold">Airports</div>
+              <div className="divide-y divide-[#E0E0E0]">
+                <MapAirportButton airport={flight.origin} code={importedOrigin} role="Departure" selected={selectedAirportCode === importedOrigin} onClick={() => setSelectedAirportCode(importedOrigin)} color="green" />
+                <MapAirportButton airport={flight.destination} code={importedDestination} role="Arrival" selected={selectedAirportCode === importedDestination} onClick={() => setSelectedAirportCode(importedDestination)} color="orange" />
+                {alternates.map((apt, index) => <MapAirportButton key={airportCode(apt) || index} airport={apt} code={airportCode(apt)} role={`Alternate ${index + 1}`} selected={selectedAirportCode === airportCode(apt)} onClick={() => setSelectedAirportCode(airportCode(apt))} color="purple" />)}
               </div>
-
-              {/* COLLAPSIBLE SECTIONS */}
               <div className="border-t border-[#D0D0D0]">
-                <button className="flex w-full items-center justify-between px-4 py-3.5 font-semibold text-[15px] text-[#25282C] border-b border-[#E0E0E0] hover:bg-black/5">
-                  <span>EDTO</span>
-                  <ChevronRight size={20} className="text-gray-500" />
-                </button>
-
-                <button className="flex w-full items-center justify-between px-4 py-3.5 font-semibold text-[15px] text-[#25282C] border-b border-[#E0E0E0] hover:bg-black/5">
-                  <span>Enroute Airport</span>
-                </button>
-
-                <button className="flex w-full items-center justify-between px-4 py-3.5 font-semibold text-[15px] text-[#25282C] border-b border-[#E0E0E0] hover:bg-black/5">
-                  <span>Enroute Others</span>
-                  <ChevronRight size={20} className="text-gray-500" />
-                </button>
+                <button className="flex w-full items-center justify-between px-4 py-3 font-semibold text-[14px] text-[#25282C] border-b border-[#E0E0E0]"><span>Route</span><ChevronDown size={18} className="text-gray-500" /></button>
+                <div className="max-h-[260px] overflow-y-auto px-4 py-3">
+                  {navFixes.length ? navFixes.map((fix, index) => <div key={`${fix.ident}-${index}`} className="flex items-center justify-between gap-3 py-1.5 text-[12px]"><span className="font-semibold">{fix.ident}</span><span className="text-gray-500">{fixAltitude(fix)}</span></div>) : <div className="text-[12px] text-gray-500">No detailed navlog in OFP</div>}
+                </div>
               </div>
             </aside>
-
-
-            {/* RIGHT PANEL - MAP & DETAILS */}
-            <section className="flex flex-1 flex-col overflow-hidden bg-white">
-              
-              {/* TOP MAP VIEW */}
-              <div className="relative flex-1 bg-[#E8E7E1] overflow-hidden">
-                <DynamicRoutePreview flight={flight} />
-
-                <div className="absolute top-[38%] left-[49%] flex flex-col items-center">
-                  <MapPin size={26} fill="#7A6899" color="#7A6899" />
+            <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
+              <div className="relative min-h-0 flex-1"><DynamicMap flight={flight} navFixes={navFixes} airports={mapAirports} showLabels /></div>
+              <div className="h-[280px] shrink-0 border-t border-[#C4C6C8] bg-[#F4F4F4] shadow-inner">
+                <div className="flex h-9 items-end justify-between border-b border-[#D5D5D5] px-4">
+                  <div className="flex gap-1"><button onClick={() => setMapSubTab("WX")} className={`px-5 py-2 text-[13px] font-semibold ${mapSubTab === "WX" ? "border-t-2 border-[#526C9B] bg-[#E0E0E0] text-gray-900" : "text-gray-500"}`}>WX</button><button onClick={() => setMapSubTab("NOTAM")} className={`px-5 py-2 text-[13px] font-semibold ${mapSubTab === "NOTAM" ? "border-t-2 border-[#526C9B] bg-[#E0E0E0] text-gray-900" : "text-gray-500"}`}>NOTAM</button></div>
+                  <button onClick={() => refreshLiveWeather(flight)} className="mb-1 flex items-center gap-1 rounded border border-[#B0B0B0] bg-white px-3 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50"><RefreshCw size={13} /> Refresh</button>
                 </div>
-                <div className="absolute top-[68%] left-[45%] flex flex-col items-center">
-                  <MapPin size={26} fill="#7A6899" color="#7A6899" />
-                </div>
-                <div className="absolute top-[58%] left-[41%] flex flex-col items-center">
-                  <MapPin size={26} fill="#7A6899" color="#7A6899" />
-                </div>
+                <div className="h-[242px] overflow-y-auto p-4">{selectedAirportCode ? <MapDetail airportCode={selectedAirportCode} flight={flight} alternates={alternates} tab={mapSubTab} weatherLive={weatherLive[selectedAirportCode]} loading={weatherLoading} /> : null}</div>
               </div>
-
-              {/* BOTTOM DETAIL SHEET */}
-              <div className="h-[260px] border-t border-[#C4C6C8] bg-[#F4F4F4] flex flex-col shadow-inner">
-                <div className="flex h-3 w-full justify-center items-center">
-                  <div className="h-1 w-12 rounded-full bg-[#B0B0B0]" />
-                </div>
-
-                <div className="px-5 py-2">
-                  <h2 className="text-[17px] font-bold text-[#25282C] uppercase tracking-wide">
-                    {selectedAirport.icao} - {selectedAirport.name}
-                  </h2>
-                </div>
-
-                <div className="px-4 py-1">
-                  <button className="flex w-full items-center justify-between rounded bg-[#E4E4E4] px-4 py-2 text-[14px] font-semibold text-gray-700 hover:bg-[#DCDCDC]">
-                    <span>WX</span>
-                    <ChevronRight size={18} className="text-gray-500" />
-                  </button>
-                </div>
-
-                <div className="mt-2 flex items-center justify-between border-b border-[#D5D5D5] px-4">
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => setSubTab("NOTAM")}
-                      className={`px-6 py-2 text-[13px] font-semibold transition-colors ${
-                        subTab === "NOTAM"
-                          ? "bg-[#E0E0E0] text-gray-900 border-t-2 border-[#526C9B]"
-                          : "text-gray-500 hover:text-gray-800"
-                      }`}
-                    >
-                      NOTAM
-                    </button>
-                    <button
-                      onClick={() => setSubTab("RAIM")}
-                      className={`px-6 py-2 text-[13px] font-semibold transition-colors ${
-                        subTab === "RAIM"
-                          ? "bg-[#E0E0E0] text-gray-900 border-t-2 border-[#526C9B]"
-                          : "text-gray-500 hover:text-gray-800"
-                      }`}
-                    >
-                      RAIM
-                    </button>
-                  </div>
-
-                  <button className="mb-1 rounded border border-[#B0B0B0] bg-white px-3 py-1 text-[12px] font-semibold text-gray-700 shadow-sm hover:bg-gray-50">
-                    View AFC
-                  </button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto px-6 py-3">
-                  {subTab === "RAIM" ? (
-                    <table className="w-full text-center text-[12px]">
-                      <thead>
-                        <tr className="text-gray-500 uppercase tracking-wider text-[11px] font-semibold border-b border-gray-200 pb-1">
-                          <th className="py-1">PRECISION</th>
-                          <th className="py-1">BARO AIDED</th>
-                          <th className="py-1">MASK ANGLE</th>
-                          <th className="py-1">OUTAGE</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200 text-gray-800 font-medium">
-                        <tr>
-                          <td className="py-1.5">RNP 0.15</td>
-                          <td className="py-1.5 text-gray-600">false</td>
-                          <td className="py-1.5">5.0</td>
-                          <td className="py-1.5">13:43 - 14:07</td>
-                        </tr>
-                        <tr>
-                          <td className="py-1.5">RNP 0.16</td>
-                          <td className="py-1.5 text-gray-600">false</td>
-                          <td className="py-1.5">5.0</td>
-                          <td className="py-1.5">13:43 - 14:07</td>
-                        </tr>
-                        <tr>
-                          <td className="py-1.5">RNP 0.3</td>
-                          <td className="py-1.5 text-gray-600">false</td>
-                          <td className="py-1.5">5.0</td>
-                          <td className="py-1.5">NO OUTAGES</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div className="py-4 text-center text-[13px] text-gray-500">
-                      No critical NOTAMs for selected airport.
-                    </div>
-                  )}
-                </div>
-
-              </div>
-
             </section>
-
           </div>
         )}
 
-                {/* ================= CLEARANCES TAB ================= */}
         {activeTab === "clearances" && (
-          <div className="h-full w-full overflow-y-auto bg-[#E5E7EB] p-3">
+          <div className="h-full overflow-y-auto bg-[#E5E7EB] p-3">
             <div className="mx-auto max-w-[1100px] space-y-3">
-
-              <section className="rounded-xl border border-[#D0D0D0] bg-[#F1F1F1]">
-                <div className="border-b border-[#D0D0D0] px-5 py-4">
-                  <h2 className="text-[19px] font-semibold">
-                    Clearances
-                  </h2>
-                  <p className="mt-1 text-[12px] text-gray-500">
-                    Flight {effectiveFlight} · {importedOrigin} → {importedDestination}
-                  </p>
-                </div>
-
-                <div className="p-4 space-y-3">
-
-                  <div className="rounded-lg border border-[#D5D5D5] bg-white">
-                    <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-                      <div>
-                        <div className="text-[15px] font-semibold">
-                          ATC Clearance
-                        </div>
-                        <div className="text-[11px] text-gray-500">
-                          IFR Clearance
-                        </div>
-                      </div>
-
-                      <span className="rounded-full bg-[#69C92D] px-3 py-1 text-[11px] font-bold text-[#17500D]">
-                        READY
-                      </span>
-                    </div>
-
-                    <div className="p-4">
-                      <div className="rounded-md bg-[#F4F4F4] p-4 font-mono text-[13px] leading-[1.7]">
-                        <div>{flight.pdcText || `${effectiveFlight}, cleared ${importedOrigin} to ${importedDestination}`}</div>
-                        <div>{effectiveRoute}</div>
-                        <div>Initial cruise / cleared altitude: {flight.cruiseAltitude || "-"}</div>
-                        <div>Aircraft: {effectiveAircraft}</div>
-                        <div>Squawk: {getPath(flight, "atc.squawk", "-")}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-
-                    <div className="rounded-lg border border-[#D5D5D5] bg-white p-4">
-                      <div className="mb-3 text-[14px] font-semibold">
-                        Clearance Data
-                      </div>
-
-                      <div className="space-y-3">
-                        <WeatherRow label="Destination" value={importedDestination} />
-                        <WeatherRow label="Departure" value={importedOrigin} />
-                        <WeatherRow label="SID" value={firstValue(getPath(flight, "general.sid", ""), getPath(flight, "origin.sid", "-"), "-")} />
-                        <WeatherRow label="Cruise" value={flight.cruiseAltitude || "-"} />
-                        <WeatherRow label="Squawk" value={getPath(flight, "atc.squawk", "-")} />
-                      </div>
-                    </div>
-
-                    <div className="rounded-lg border border-[#D5D5D5] bg-white p-4">
-                      <div className="mb-3 text-[14px] font-semibold">
-                        Frequencies
-                      </div>
-
-                      <div className="space-y-3">
-                        <WeatherRow label="DELIVERY" value="121.85" />
-                        <WeatherRow label="GROUND" value="121.70" />
-                        <WeatherRow label="TOWER" value="118.30" />
-                        <WeatherRow label="DEPARTURE" value="119.20" />
-                        <WeatherRow label="CENTER" value="125.32" />
-                      </div>
-                    </div>
-
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <button onClick={copyClearance} className="flex h-[48px] items-center justify-center gap-2 rounded-md border border-gray-300 bg-white font-semibold hover:bg-gray-50">
-                      {copiedClearance ? <CheckCircle2 size={18} /> : <Copy size={18} />}
-                      {copiedClearance ? "Copied" : "Copy Clearance"}
-                    </button>
-
-                    <button className="h-[48px] rounded-md bg-[#0B1E48] font-semibold text-white hover:bg-[#10285C]">
-                      Mark Read
-                    </button>
-                  </div>
-
+              <section className="overflow-hidden rounded-xl border border-[#D0D0D0] bg-white">
+                <div className="flex items-center justify-between border-b border-[#D0D0D0] bg-[#F1F1F1] px-5 py-4"><div><h2 className="text-[19px] font-semibold">Clearances</h2><p className="mt-1 text-[12px] text-gray-500">{effectiveFlight} · {importedOrigin} → {importedDestination}</p></div><span className="rounded-full bg-[#69C92D] px-3 py-1 text-[11px] font-bold text-[#17500D]">READY</span></div>
+                <div className="space-y-3 p-4"><div className="rounded-lg border border-gray-200 bg-[#F5F5F5] p-4 font-mono text-[13px] leading-7 whitespace-pre-wrap">{flight.pdcText || `${effectiveFlight}, cleared ${importedOrigin} to ${importedDestination}\nvia ${flight.route || "as filed"}\nMaintain ${formatAltitudeValue(flight.cruiseAltitude)}\nDeparture frequency —\nSquawk —`}</div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><InfoPanel title="Flight Data"><InfoRow label="Aircraft" value={effectiveAircraft} /><InfoRow label="Registration" value={flight.registration || "-"} /><InfoRow label="Cruise" value={formatAltitudeValue(flight.cruiseAltitude)} /><InfoRow label="Cost Index" value={flight.costIndex || "-"} /></InfoPanel><InfoPanel title="Route"><div className="break-words text-[13px] leading-6 text-gray-700">{effectiveRouteText(importedOrigin, flight.route, importedDestination)}</div></InfoPanel></div>
+                  <div className="grid grid-cols-2 gap-3"><button onClick={copyClearance} className="flex h-[48px] items-center justify-center gap-2 rounded-md border border-gray-300 bg-white font-semibold hover:bg-gray-50"><Copy size={16} />{copiedClearance ? "Copied" : "Copy Clearance"}</button><button onClick={() => toggleChecklist("status")} className="h-[48px] rounded-md bg-[#0B1E48] font-semibold text-white hover:bg-[#10285C]">{checklist.status ? "Accepted" : "Accept Clearance"}</button></div>
                 </div>
               </section>
-
             </div>
           </div>
         )}
 
-        {/* ================= NAVLOG TAB ================= */}
         {activeTab === "navlog" && (
-          <NavLogView
-            flight={flight}
-            importedOrigin={importedOrigin}
-            importedDestination={importedDestination}
-            effectiveFlight={effectiveFlight}
-            effectiveAircraft={effectiveAircraft}
-          />
+          <div className="h-full overflow-y-auto bg-[#DDE0E3]">
+            <div className="mx-auto max-w-[1180px]">
+
+              {/* Lido-style fuel / reserve strip */}
+              <section className="border-b border-[#C2C5C8] bg-[#F0F1F2] px-5 pt-4">
+                <div className="h-[18px] overflow-hidden rounded-[3px] bg-[#17345F] shadow-inner">
+                  <div className="relative h-full w-full">
+                    <div
+                      className="absolute left-0 top-0 h-full"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.max(
+                            7,
+                            (toNumber(flight.reserveFuel) /
+                              Math.max(
+                                1,
+                                toNumber(flight.rampFuel || flight.takeoffFuel || flight.reserveFuel)
+                              )) *
+                              100
+                          )
+                        )}%`,
+                        backgroundImage:
+                          "repeating-linear-gradient(-45deg, #C53C48 0px, #C53C48 5px, #18345F 5px, #18345F 10px)",
+                      }}
+                    />
+                    <div
+                      className="absolute top-[-2px] bottom-[-2px] w-[4px] rounded-full bg-[#F0A33A]"
+                      style={{
+                        left: `${Math.min(
+                          98,
+                          Math.max(
+                            3,
+                            (toNumber(flight.reserveFuel) /
+                              Math.max(
+                                1,
+                                toNumber(flight.rampFuel || flight.takeoffFuel || flight.reserveFuel)
+                              )) *
+                              100
+                          )
+                        )}%`,
+                      }}
+                    />
+                    <div
+                      className="absolute top-[-2px] bottom-[-2px] w-[4px] rounded-full bg-[#6FBC41]"
+                      style={{
+                        left: `${Math.min(
+                          99,
+                          Math.max(
+                            5,
+                            ((toNumber(flight.reserveFuel) + toNumber(flight.landingFuel)) /
+                              Math.max(
+                                1,
+                                toNumber(flight.rampFuel || flight.takeoffFuel || flight.reserveFuel)
+                              )) *
+                              100
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-[11px] font-semibold text-[#374151]">
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#C53C48]" />
+                    FINAL RESERVE {formatNumber(flight.reserveFuel)} kg
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-3 w-[3px] rounded-full bg-[#F0A33A]" />
+                    TOTAL RESERVE {formatNumber(toNumber(flight.reserveFuel) + toNumber(flight.alternateFuel))} kg
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-3 w-[3px] rounded-full bg-[#6FBC41]" />
+                    LANDING {formatNumber(flight.landingFuel)} kg
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-[1.5fr_.65fr_1fr_1fr_1fr_.95fr_1fr] items-end border-t border-[#D1D4D7] pb-2 pt-1 text-[11px] font-semibold text-gray-600">
+                  <span>WPT ({navFixes.length})</span>
+                  <span>DTD (NM)</span>
+                  <span>Pln.Time</span>
+                  <span>Act.Time</span>
+                  <span>Time Delta</span>
+                  <span>MFOB (kg)</span>
+                  <span>AFOB (kg)</span>
+                </div>
+              </section>
+
+              {/* Actual Lido-like waypoint cards */}
+              <div className="space-y-[2px] px-1 pb-24">
+                {navFixes.length ? (
+                  navFixes.map((fix, index) => {
+                    const ident = getIdent(fix, `FIX${index + 1}`);
+                    const skipped =
+                      String(ident).startsWith("(") ||
+                      String(ident).toUpperCase().includes("AB_");
+                    const plannedTime = firstValue(
+                      fix.time_total,
+                      fix.time,
+                      fix.eta,
+                      fix.ete,
+                      ""
+                    );
+                    const mFOB = firstValue(
+                      fix.fuel_plan_onboard,
+                      fix.fuel_remaining,
+                      fix.fob,
+                      fix.efob,
+                      ""
+                    );
+                    const airway = firstValue(
+                      fix.via_airway,
+                      fix.airway,
+                      fix.airway_name,
+                      "DCT"
+                    );
+                    const dist = firstValue(
+                      fix.distance_to_dest,
+                      fix.dtd,
+                      fix.distance,
+                      fix.distance_nm,
+                      "-"
+                    );
+                    const dtw = firstValue(
+                      fix.distance_to_go,
+                      fix.dtw,
+                      fix.dist_to_go,
+                      ""
+                    );
+                    const msa = firstValue(
+                      fix.msa,
+                      fix.minimum_safe_altitude,
+                      "-"
+                    );
+                    const gs = firstValue(
+                      fix.groundspeed,
+                      fix.gs,
+                      "-"
+                    );
+                    const tas = firstValue(
+                      fix.true_airspeed,
+                      fix.tas,
+                      "-"
+                    );
+                    const ias = firstValue(
+                      fix.ind_airspeed,
+                      fix.ias,
+                      "-"
+                    );
+                    const mach = firstValue(fix.mach, "-");
+                    const oat = firstValue(
+                      fix.oat,
+                      fix.temperature,
+                      fix.temp,
+                      fix.oat_temp,
+                      "-"
+                    );
+                    const coordLat = fix.lat;
+                    const coordLon = fix.lon;
+                    const wind = fixWind(fix);
+                    const stage = firstValue(fix.stage, fix.phase, "");
+                    const legTime = formatNavTime(
+                      firstValue(fix.time_leg, fix.leg_time, fix.ete, "")
+                    );
+
+                    return (
+                      <div
+                        key={`${ident}-${index}`}
+                        className={`overflow-hidden rounded-[4px] border border-[#C5C8CB] shadow-[0_1px_2px_rgba(0,0,0,.12)] ${
+                          skipped ? "bg-[#B9BBBE]" : "bg-[#D5D7D9]"
+                        }`}
+                      >
+                        {/* Main waypoint line */}
+                        <div className="relative grid min-h-[72px] grid-cols-[1.5fr_.65fr_1fr_1fr_1fr_.95fr_1fr_auto] items-center gap-2 px-3 py-2">
+                          <div
+                            className={`absolute left-0 top-0 bottom-0 w-[5px] ${
+                              index === 0 ? "bg-[#294D89]" : "bg-transparent"
+                            }`}
+                          />
+                          <div className="pl-2">
+                            <div className="text-[26px] leading-none font-semibold tracking-tight text-[#1B2430]">
+                              {ident}
+                            </div>
+                            {stage && (
+                              <div className="mt-1 text-[10px] font-semibold uppercase text-gray-500">
+                                {stage}
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-[14px] font-medium text-[#303942]">{dist}</div>
+                          <div className="text-[15px] font-medium">
+                            {formatNavTime(plannedTime)}
+                            <div className="mt-[2px] w-fit border-b-2 border-dotted border-[#667085] text-[9px] text-transparent">
+                              --
+                            </div>
+                          </div>
+                          <div>
+                            <div className="h-[46px] rounded-md bg-white/85" />
+                          </div>
+                          <div>
+                            <div className="h-[46px] rounded-md bg-white/30 px-2 text-center pt-3 text-[12px] text-gray-500">
+                              --
+                            </div>
+                          </div>
+                          <div className="text-[15px] font-medium">{formatNumber(mFOB)}</div>
+                          <div>
+                            <div className="h-[46px] rounded-md bg-white/85" />
+                          </div>
+                          <div className="pr-1 text-[18px] text-gray-500">✈</div>
+                        </div>
+
+                        {/* Route / airway strip */}
+                        <div className="grid grid-cols-4 gap-2 border-y border-[#C4C6C9] bg-[#E9EAEB] px-3 py-[4px] text-[11px] font-semibold text-[#333B44]">
+                          <span className="pl-2">{airway}</span>
+                          <span>{firstValue(fix.wind_component, fix.wc, `${wind}`)}</span>
+                          <span>DTW {dtw || "-"}</span>
+                          <span>FL {fixAltitude(fix).replace("FL", "")} &nbsp; MSA {String(msa).replace("FL", "")}</span>
+                        </div>
+
+                        {/* Expanded details — matches the reference's dense data band */}
+                        <div className="grid grid-cols-3 gap-y-1 px-4 py-2 text-[11px] text-[#4A5561]">
+                          <div>
+                            Coordinate{" "}
+                            <strong className="text-[#333B44]">
+                              {Number.isFinite(coordLat) && Number.isFinite(coordLon)
+                                ? `${coordLat.toFixed(2)} / ${coordLon.toFixed(2)}`
+                                : "-"}
+                            </strong>
+                          </div>
+                          <div>
+                            OAT <strong className="text-[#333B44]">{oat === "-" ? "-" : `${oat} °C`}</strong>
+                          </div>
+                          <div>
+                            Wind <strong className="text-[#333B44]">{wind}</strong>
+                          </div>
+                          <div>
+                            Windshear Rate <strong className="text-[#333B44]">{firstValue(fix.windshear_rate, "NA")}</strong>
+                          </div>
+                          <div>
+                            GS/TAS <strong className="text-[#333B44]">{gs}/{tas}</strong>
+                          </div>
+                          <div>
+                            IAS/Mach <strong className="text-[#333B44]">{ias}/{mach}</strong>
+                          </div>
+                          <div className="col-span-3 flex justify-between border-t border-[#C9CDD1] pt-1 text-[10px] text-gray-500">
+                            <span>Leg {legTime}</span>
+                            <span>Total {formatNavTime(firstValue(fix.time_total, fix.time, fix.total_time, ""))}</span>
+                            <span>Fuel delta {firstValue(fix.fuel_leg, fix.fuel, "-")}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-md border border-[#C9CDD1] bg-white px-5 py-12 text-center text-[13px] text-gray-500">
+                    No navigation fixes were returned by SimBrief. Re-import the latest OFP.
+                  </div>
+                )}
+
+                {/* Bottom controls, matching the reference */}
+                <div className="mt-2 overflow-hidden rounded-md border border-[#C4C7CA] bg-[#D5D7D9]">
+                  <div className="flex items-center justify-center border-b border-[#C3C6C9] bg-[#E8E9EA] py-2 text-[12px] font-semibold text-[#30363D]">
+                    ▴ Hide skipped waypoints (
+                    {navFixes.filter((fix) => {
+                      const id = getIdent(fix, "");
+                      return String(id).startsWith("(") || String(id).toUpperCase().includes("AB_");
+                    }).length}
+                    )
+                  </div>
+                  <div className="grid grid-cols-[1fr_1fr_1fr_1fr_auto_auto] gap-2 p-2">
+                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">N000 00.0</div>
+                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">E000 00.0</div>
+                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">00:00</div>
+                    <div className="rounded bg-white/80 px-3 py-2 text-[12px] text-gray-400">000000</div>
+                    <button className="rounded-full bg-white/35 px-3 text-gray-400">−</button>
+                    <button className="rounded-full bg-white/35 px-3 text-gray-400">+</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
-
-
       </main>
 
-      {/* =========================================================
-          DASHBOARD PAGE INDICATORS
-          ========================================================= */}
-
-      {activeTab === "dashboard" && (
-        <div className="pointer-events-none absolute bottom-[70px] left-0 right-0 z-20 flex h-[25px] items-center justify-center gap-2">
-          <button
-            onClick={() => setDashboardPage(0)}
-            className={`pointer-events-auto h-[9px] w-[9px] rounded-full ${
-              dashboardPage === 0 ? "bg-[#6C7074]" : "bg-[#C7C9CB]"
-            }`}
-          />
-          <button
-            onClick={() => setDashboardPage(1)}
-            className={`pointer-events-auto h-[9px] w-[9px] rounded-full ${
-              dashboardPage === 1 ? "bg-[#6C7074]" : "bg-[#C7C9CB]"
-            }`}
-          />
-        </div>
-      )}
-
-
-      {/* =========================================================
-          BOTTOM NAVIGATION
-          ========================================================= */}
-
-      <nav className="z-30 flex h-[70px] min-h-[70px] border-t border-[#C4C6C8] bg-[#D1D3D4]">
+      <nav className="z-40 flex h-[70px] min-h-[70px] border-t border-[#C4C6C8] bg-[#D1D3D4]">
         {navigationItems.map((item) => {
           const Icon = item.icon;
           const active = activeTab === item.id;
-
-          return (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`flex flex-1 flex-col items-center justify-center gap-1 ${
-                active ? "text-[#354C70]" : "text-[#777B7F]"
-              }`}
-            >
-              <Icon size={22} strokeWidth={active ? 2.2 : 1.7} />
-              <span className={`text-[11px] ${active ? "font-semibold" : "font-normal"}`}>
-                {item.label}
-              </span>
-            </button>
-          );
+          return <button key={item.id} onClick={() => setActiveTab(item.id)} className={`flex flex-1 flex-col items-center justify-center gap-1 ${active ? "text-[#354C70]" : "text-[#777B7F]"}`}><Icon size={22} strokeWidth={active ? 2.2 : 1.7} /><span className={`text-[11px] ${active ? "font-semibold" : "font-normal"}`}>{item.label}</span></button>;
         })}
       </nav>
-
     </div>
   );
 }
 
-
-/* ================================================================
-   HELPER COMPONENTS
-   ================================================================ */
-
-function TimeRow({ label, value }) {
-  return (
-    <div className="flex justify-between py-[2px]">
-      <span className="text-[12px] text-gray-500">{label}</span>
-      <span className="text-[13px] font-semibold">{value}</span>
-    </div>
-  );
+function HeaderCell({ children }) {
+  return <div className="flex h-full items-center border-r border-[#C4C6C8] px-3">{children}</div>;
 }
 
-function ChecklistRow({ label, value, last, checked = false, onClick }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex min-h-[51px] w-full items-center gap-3 text-left ${
-        !last ? "border-b border-gray-200" : ""
-      }`}
-    >
-      <span
-        className={`flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-full border-2 ${
-          checked ? "border-[#0B1E48] bg-[#0B1E48]" : "border-gray-300 bg-white"
-        }`}
-      >
-        {checked && <span className="h-[8px] w-[8px] rounded-full bg-white" />}
-      </span>
-      <span className="text-[14px] text-gray-500">{label}</span>
-      <span className="ml-auto text-[14px] font-semibold">{value}</span>
-    </button>
-  );
+function FlightInfoCard({ flight, origin, destination, effectiveFlight, aircraft }) {
+  return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><div className="grid grid-cols-3 items-center"><span className="text-[13px] text-gray-500">{aircraft}</span><span className="text-center text-[20px] font-bold">{effectiveFlight}</span><span className="text-right text-[13px] text-gray-500">{flight.registration || "-"}</span></div><div className="mt-1 text-center"><span className="rounded-full bg-[#69C92D] px-4 py-1 text-[12px] font-bold text-[#17500D]">On time</span></div><div className="mt-1 text-center text-[13px]">({flight.blockTime || flight.tripTime})</div><div className="my-1 flex items-center justify-center gap-5"><span className="text-[30px] font-bold">{origin}</span><span className="text-[25px] text-gray-500">→</span><span className="text-[30px] font-bold">{destination}</span></div><div className="grid grid-cols-2 border-b border-gray-300 pb-2 text-center"><div className="border-r border-gray-300"><div className="text-[12px] text-gray-500">RWY {flight.origin?.runway || "—"}</div><div className="mt-1 text-[12px]">STD {formatTime(flight.scheduledOut)}</div></div><div><div className="text-[12px] text-gray-500">RWY {flight.destination?.runway || "—"}</div><div className="mt-1 text-[12px]">STA {formatTime(flight.scheduledIn)}</div></div></div><div className="grid grid-cols-2 py-2"><div className="border-r border-gray-300 px-2"><TimeRow label="STD" value={formatTime(flight.scheduledOut)} /><TimeRow label="ETD" value={formatTime(flight.estimatedOut)} /><TimeRow label="Off-block" value={formatTime(flight.estimatedOut)} /></div><div className="px-2"><TimeRow label="STA" value={formatTime(flight.scheduledIn)} /><TimeRow label="ETA" value={formatTime(flight.estimatedIn)} /><TimeRow label="On-block" value={formatTime(flight.estimatedIn)} /></div></div><div className="pb-1 text-center text-[12px] text-gray-500">{flight.estimatedOff ? `Takeoff ${formatTime(flight.estimatedOff)}` : "- CTOT"}</div><button className="mt-2 h-[51px] w-full rounded-md bg-[#0B1E48] text-[16px] font-semibold text-white">Accept Flight</button></section>;
 }
 
-function FuelRow({ label, value }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-[14px] text-gray-600">{label}</span>
-      <span className="text-[14px] font-semibold">{value}</span>
-    </div>
-  );
+function ChecklistCard({ checklist, onToggle, fuelOrdered, navlogLoaded }) {
+  const rows = [{ key: "status", label: "Status:", value: checklist.status ? "Accepted" : "Final" }, { key: "fuel", label: "Fuel:", value: fuelOrdered ? "Ordered" : "Not ordered" }, { key: "navlog", label: "NavLog:", value: navlogLoaded ? "Loaded" : "Pending" }, { key: "journey", label: "Journey Log:", value: checklist.journey ? "Ready" : "Pending" }];
+  return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="mb-3 text-center text-[19px] font-semibold">Flight Checklist</h2><div className="rounded-md bg-white px-3">{rows.map((row, index) => <button key={row.key} onClick={() => onToggle(row.key)} className={`flex min-h-[51px] w-full items-center gap-3 text-left ${index < rows.length - 1 ? "border-b border-gray-200" : ""}`}><span className={`flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-full border-2 ${checklist[row.key] ? "border-[#65C529] bg-[#65C529] text-white" : "border-gray-300 bg-white"}`}>{checklist[row.key] && <CheckCircle2 size={14} />}</span><span className="text-[14px] text-gray-500">{row.label}</span><span className="ml-auto text-[14px] font-semibold">{row.value}</span></button>)}</div></section>;
 }
 
-function WeatherRow({ label, value }) {
-  return (
-    <div className="flex justify-between">
-      <span className="text-[13px] text-gray-500">{label}</span>
-      <span className="text-[13px] font-semibold">{value}</span>
-    </div>
+function DynamicMap({ flight, navFixes, airports, compact = false, showLabels = true, onToggleLabels }) {
+  const containerRef = useRef(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    if (!containerRef.current) return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (rect) setSize({ width: rect.width, height: rect.height });
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  const routeGeoPoints = useMemo(() => {
+    const fixes = (navFixes || []).filter(
+      (f) => Number.isFinite(f.lat) && Number.isFinite(f.lon)
+    );
+
+    const origin = flight?.origin;
+    const destination = flight?.destination;
+
+    return [
+      ...(Number.isFinite(origin?.lat) && Number.isFinite(origin?.lon) ? [origin] : []),
+      ...fixes,
+      ...(Number.isFinite(destination?.lat) && Number.isFinite(destination?.lon)
+        ? [destination]
+        : []),
+    ];
+  }, [flight?.origin, flight?.destination, navFixes]);
+
+  const geoPoints = useMemo(() => {
+    const apts = (airports || []).filter(
+      (a) => Number.isFinite(a.lat) && Number.isFinite(a.lon)
+    );
+    const points = [...routeGeoPoints, ...apts];
+    return points.length ? points : routeGeoPoints;
+  }, [routeGeoPoints, airports]);
+
+  const view = useMemo(
+    () => fitMapView(geoPoints, size.width, size.height),
+    [geoPoints, size.width, size.height]
   );
-}
 
-function AirportTabs({ selected, onChange, options }) {
-  const fallback = [
-    { id: "KEWR", label: "KEWR" },
-    { id: "KDCA", label: "KDCA" },
-    { id: "ALTN", label: "ALTN" },
-  ];
-  const items = options?.length ? options.slice(0, 4) : fallback;
+  const tiles = useMemo(() => {
+    if (!view || !size.width || !size.height) return [];
+    return makeTiles(view.zoom, view.bounds, size.width, size.height);
+  }, [view, size.width, size.height]);
 
-  return (
-    <div className={`mt-3 grid overflow-hidden rounded-lg bg-[#D0D0D2]`} style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
-      {items.map((airport) => {
-        const active = selected === airport.id || selected === airport.label;
-        return (
-          <button
-            key={airport.id}
-            onClick={() => onChange(airport.id)}
-            className={`h-[38px] text-[13px] font-semibold ${
-              active ? "m-[2px] rounded-md bg-white shadow-sm" : "text-gray-600"
-            }`}
-          >
-            {airport.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+  const project = (lat, lon) => {
+    if (!view) return null;
+    const p = geoToWorld(lat, lon, view.zoom);
+    return {
+      x: p.x - view.topLeft.x,
+      y: p.y - view.topLeft.y,
+    };
+  };
 
-function DocumentRow({ title, date, last }) {
-  return (
-    <div className={`px-3 py-3 ${!last ? "border-b border-gray-200" : ""}`}>
-      <div className="text-[14px]">{title}</div>
-      <div className="mt-1 text-[11px] text-gray-500">{date}</div>
-    </div>
-  );
-}
-
-function NotamItem({ text, last }) {
-  return (
-    <div className={`relative px-3 py-3 text-[13px] leading-[1.55] ${!last ? "border-b border-gray-200" : ""}`}>
-      <Flag size={19} className="absolute right-3 top-3 text-gray-300" fill="currentColor" />
-      <div className="pr-7">{text}</div>
-    </div>
-  );
-}
-
-function BriefingValue({ label, value }) {
-  return (
-    <div className="min-w-0">
-      <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-gray-500">{label}</div>
-      <div className="truncate text-[18px] font-medium text-[#25282C]">{value}</div>
-    </div>
-  );
-}
-
-function WeightRow({ name, planned, actual, operational, structural, actualInput = false }) {
-  return (
-    <div className="grid min-h-[58px] grid-cols-[1.2fr_1fr_1fr_1.1fr_1.1fr] items-center">
-      <span className="text-[16px] font-medium">{name}</span>
-      <span className="text-[17px] font-medium">{planned}</span>
-      <div>
-        {actualInput && actual ? (
-          <div className="mx-auto flex h-[47px] max-w-[115px] items-center justify-center rounded-md bg-[#E1E1E1] text-[16px] text-gray-500">
-            {actual}
-          </div>
-        ) : actual ? (
-          <span className="text-[16px]">{actual}</span>
-        ) : null}
-      </div>
-      <div>
-        {operational && (
-          <div className="mx-auto flex h-[47px] max-w-[115px] items-center justify-center rounded-md bg-[#E1E1E1] text-[16px] font-medium">
-            {operational}
-          </div>
-        )}
-      </div>
-      <div className="text-right text-[16px] font-medium">{structural}</div>
-    </div>
-  );
-}
-
-function FuelLine({ label, time, fuel, bold = false }) {
-  return (
-    <div className="grid grid-cols-[1fr_255px_95px] items-center py-3">
-      <span className={`text-[15px] ${bold ? "font-semibold" : ""}`}>{label}</span>
-      <span className={`text-right text-[15px] ${bold ? "font-semibold" : ""}`}>{time}</span>
-      <span className={`text-right text-[15px] ${bold ? "font-semibold" : ""}`}>{fuel}</span>
-    </div>
-  );
-}
-
-function NavLogView({ flight, importedOrigin, importedDestination, effectiveFlight, effectiveAircraft }) {
-  const [selectedIndex, setSelectedIndex] = React.useState(1);
-
-  const fixes = (flight?.navlog || [])
-    .map((fix, index) => ({
-      ...fix,
-      ident: firstValue(fix.ident, fix.fix_ident, fix.name, `FIX${index + 1}`),
-    }))
+  const projectedRoute = routeGeoPoints
+    .map((point) => project(point.lat, point.lon))
     .filter(Boolean);
 
-  const finalReserve = toNumber(flight?.reserveFuel);
-  const alternateFuel = toNumber(flight?.alternateFuel);
-  const totalReserve = finalReserve + alternateFuel;
-  const landingFuel = toNumber(flight?.landingFuel);
-  const blockFuel = toNumber(flight?.rampFuel || flight?.takeoffFuel || flight?.minTakeoffFuel);
-  const fuelProgress = blockFuel > 0 ? Math.min(100, Math.max(12, (landingFuel / blockFuel) * 100)) : 55;
+  const path = projectedRoute
+    .map(
+      (point, index) =>
+        `${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`
+    )
+    .join(" ");
 
-  const formatNavTime = (fix, index) => {
-    const raw = firstValue(fix?.eta, fix?.time_total, fix?.time_total_epoch);
-    if (raw) {
-      const formatted = formatUtcTime(raw);
-      if (formatted !== "-") return formatted;
+  const gridLines = useMemo(() => {
+    if (!view || !size.width || !size.height) return [];
+    const latSpan = view.bounds.maxLat - view.bounds.minLat;
+    const lonSpan = view.bounds.maxLon - view.bounds.minLon;
+    const latStep = latSpan > 8 ? 2 : latSpan > 4 ? 1 : latSpan > 1.5 ? 0.5 : 0.25;
+    const lonStep = lonSpan > 12 ? 2 : lonSpan > 6 ? 1 : lonSpan > 3 ? 0.5 : 0.25;
+
+    const latStart = Math.floor(view.bounds.minLat / latStep) * latStep;
+    const lonStart = Math.floor(view.bounds.minLon / lonStep) * lonStep;
+    const items = [];
+
+    for (let lat = latStart; lat <= view.bounds.maxLat + latStep; lat += latStep) {
+      const p1 = project(lat, view.bounds.minLon);
+      const p2 = project(lat, view.bounds.maxLon);
+      if (p1 && p2) items.push({ type: "lat", value: lat, p1, p2 });
     }
-    const base = firstValue(flight?.scheduledOut, flight?.offBlockTime);
-    if (base) {
-      const d = new Date(base);
-      const legSeconds = fixes.slice(0, index + 1).reduce(
-        (sum, item) => sum + toNumber(firstValue(item.time_leg, item.leg_time, item.time_leg_seconds)),
-        0
-      );
-      if (!Number.isNaN(d.getTime()) && legSeconds) {
-        return new Date(d.getTime() + legSeconds * 1000).toISOString().slice(11, 16);
+
+    for (let lon = lonStart; lon <= view.bounds.maxLon + lonStep; lon += lonStep) {
+      const p1 = project(view.bounds.minLat, lon);
+      const p2 = project(view.bounds.maxLat, lon);
+      if (p1 && p2) items.push({ type: "lon", value: lon, p1, p2 });
+    }
+    return items;
+  }, [view, size.width, size.height]);
+
+  const routeArrows = useMemo(() => {
+    if (projectedRoute.length < 2) return [];
+    const result = [];
+    let distanceSinceArrow = 72;
+
+    for (let i = 1; i < projectedRoute.length; i += 1) {
+      const a = projectedRoute[i - 1];
+      const b = projectedRoute[i];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const segmentLength = Math.hypot(dx, dy);
+      if (!segmentLength) continue;
+
+      let consumed = 0;
+      while (distanceSinceArrow + consumed <= segmentLength) {
+        const dist = distanceSinceArrow + consumed;
+        const t = dist / segmentLength;
+        const x = a.x + dx * t;
+        const y = a.y + dy * t;
+        const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+        result.push({ x, y, angle });
+        consumed += 86;
       }
+
+      distanceSinceArrow = segmentLength - Math.max(0, consumed - 86);
+      if (distanceSinceArrow <= 0) distanceSinceArrow = 86;
     }
-    return "--:--";
-  };
 
-  const rowDistance = (fix, index) =>
-    firstValue(fix.distance, fix.distance_nm, fix.dtd, index === 0 ? getPath(flight, "general.gc_distance", "-") : "-");
+    return result;
+  }, [projectedRoute]);
 
-  const rowFuel = (fix, index) =>
-    firstValue(fix.fuel_remaining, fix.fuel_remain, fix.fob, fix.mfob, index === 0 ? flight.rampFuel : "-");
+  const airportPoints = (airports || [])
+    .filter((a) => Number.isFinite(a.lat) && Number.isFinite(a.lon))
+    .map((airport) => {
+      const point = project(airport.lat, airport.lon);
+      return point ? { ...airport, point } : null;
+    })
+    .filter(Boolean);
 
-  const stageLabel = (fix) =>
-    firstValue(fix.stage, fix.phase, fix.segment, fix.via, fix.airway, "DCT");
+  const latLabel = (value) =>
+    `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}°${value >= 0 ? "N" : "S"}`;
 
-  const detailValue = (fix, keys, fallback = "-") =>
-    firstValue(...keys.map((key) => getPath(fix, key, "")), fallback);
+  const lonLabel = (value) =>
+    `${Math.abs(value).toFixed(value % 1 === 0 ? 0 : 1)}°${value >= 0 ? "E" : "W"}`;
 
   return (
-    <div className="h-full w-full overflow-y-auto bg-[#E5E7EB]">
-      <div className="mx-auto max-w-[1180px] pb-4">
+    <div
+      ref={containerRef}
+      className={`relative h-full w-full overflow-hidden bg-[#E9E9E4] ${
+        compact ? "rounded-md" : ""
+      }`}
+    >
+      {/* Real map tiles underneath everything */}
+      {tiles.map((tile) => (
+        <img
+          key={`${tile.x}-${tile.y}-${tile.z}`}
+          src={tile.url}
+          alt=""
+          className="pointer-events-none absolute select-none"
+          style={{
+            left: tile.left,
+            top: tile.top,
+            width: 256,
+            height: 256,
+            opacity: 0.78,
+          }}
+          draggable={false}
+          loading="eager"
+        />
+      ))}
 
-        {/* Fuel reserve bar */}
-        <section className="border-b border-[#C5C7CA] bg-[#D8D9DA] px-5 pt-3 pb-2">
-          <div className="relative h-[25px] overflow-hidden rounded-md border border-[#B7B9BC] bg-[#142D62]">
-            <div
-              className="absolute left-0 top-0 h-full"
-              style={{
-                width: `${fuelProgress}%`,
-                background: "repeating-linear-gradient(135deg,#E65A43 0,#E65A43 5px,#243A70 5px,#243A70 10px)",
-              }}
-            />
-            <div className="absolute inset-y-0 left-[43%] w-[5px] bg-[#E59C3D] shadow-[0_0_0_1px_rgba(255,255,255,.25)]" />
-            <div className="absolute inset-y-0 left-[48%] w-[5px] bg-[#6DBB3E] shadow-[0_0_0_1px_rgba(255,255,255,.25)]" />
-          </div>
+      {/* Lido-like washed/light chart treatment */}
+      <div className="absolute inset-0 bg-[#F4F3ED]/35" />
 
-          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] font-semibold text-[#24262A]">
-            <span><b className="mr-1 text-[#8B0C43]">●</b> FINAL RESERVE {formatNumber(finalReserve)} kg</span>
-            <span><b className="mr-1 text-[#E59C3D]">▌</b> TOTAL RESERVE {formatNumber(totalReserve)} kg</span>
-            <span><b className="mr-1 text-[#6DBB3E]">▌</b> LANDING {formatNumber(landingFuel)} kg</span>
-            <span className="ml-auto text-[18px] text-gray-700">⚙</span>
-          </div>
-        </section>
+      {/* Navigation grid */}
+      {view && (
+        <svg
+          className="pointer-events-none absolute inset-0 h-full w-full"
+          viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`}
+          preserveAspectRatio="none"
+        >
+          <g stroke="#7E9186" strokeWidth="0.65" opacity="0.32">
+            {gridLines.map((line, index) => (
+              <line
+                key={`${line.type}-${index}`}
+                x1={line.p1.x}
+                y1={line.p1.y}
+                x2={line.p2.x}
+                y2={line.p2.y}
+              />
+            ))}
+          </g>
 
-        {/* Column header */}
-        <div className="grid grid-cols-[1.55fr_.8fr_.85fr_.75fr_.95fr_.95fr_.85fr_.75fr] items-center border-b border-[#C6C7C9] bg-[#E5E5E5] px-5 py-2 text-[11px] font-semibold text-gray-600">
-          <span>WPT({fixes.length})</span>
-          <span>DTD(NM)</span>
-          <span>Pln.Time</span>
-          <span>Act.Time</span>
-          <span>MFOB(kg)</span>
-          <span>AFOB(kg)</span>
-          <span>Fuel Delta</span>
-          <span></span>
-        </div>
+          {/* Coordinate labels */}
+          <g
+            fill="#66736C"
+            fontSize="10"
+            fontFamily="Arial, sans-serif"
+            opacity="0.82"
+          >
+            {gridLines
+              .filter((line) => line.type === "lat")
+              .map((line, index) => (
+                <text
+                  key={`lat-label-${index}`}
+                  x="7"
+                  y={Math.max(12, Math.min(size.height - 4, line.p1.y - 3))}
+                >
+                  {latLabel(line.value)}
+                </text>
+              ))}
+            {gridLines
+              .filter((line) => line.type === "lon")
+              .map((line, index) => (
+                <text
+                  key={`lon-label-${index}`}
+                  x={Math.max(4, Math.min(size.width - 44, line.p1.x + 3))}
+                  y="13"
+                >
+                  {lonLabel(line.value)}
+                </text>
+              ))}
+          </g>
+        </svg>
+      )}
 
-        {fixes.length === 0 ? (
-          <div className="mx-3 my-4 rounded-lg border border-[#C9CBCF] bg-white p-8 text-center text-[13px] text-gray-500">
-            No detailed navigation log is available in this OFP.
-          </div>
-        ) : (
-          <div className="space-y-[2px] px-2">
-            {fixes.map((fix, index) => {
-              const selected = index === selectedIndex;
-              const altitude = formatAltitude(firstValue(fix.altitude_feet, fix.altitude, fix.level, "-"));
-              const dtd = rowDistance(fix, index);
-              const plannedTime = formatNavTime(fix, index);
-              const mfob = rowFuel(fix, index);
-              const windDir = firstValue(fix.wind_dir, fix.wind_direction, "-");
-              const windSpd = firstValue(fix.wind_spd, fix.wind_speed, "-");
-              const gs = firstValue(fix.gs, fix.groundspeed, fix.ground_speed, "-");
-              const tas = firstValue(fix.tas, fix.true_airspeed, "-");
-              const ias = firstValue(fix.ias, fix.indicated_airspeed, "-");
-              const oat = firstValue(fix.oat, fix.temperature, fix.temp, "-");
-              const mach = firstValue(fix.mach, "-");
-              const msa = firstValue(fix.msa, fix.msa_altitude, "-");
-              const airway = stageLabel(fix);
-              const legTime = formatLegTime(firstValue(fix.time_leg, fix.leg_time, fix.time_leg_seconds, "-"));
-              const fuelDelta = firstValue(fix.fuel_burn, fix.fuel_used, fix.fuel_delta, "-");
-              const coordLat = firstValue(fix.pos_lat, fix.lat, fix.latitude, "-");
-              const coordLon = firstValue(fix.pos_long, fix.lon, fix.longitude, "-");
-
-              return (
-                <div key={`${fix.ident}-${index}`} className="overflow-hidden rounded-md border border-[#C8C9CB] bg-[#D8D8D8] shadow-[0_1px_2px_rgba(0,0,0,.08)]">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedIndex(index)}
-                    className="grid w-full grid-cols-[1.55fr_.8fr_.85fr_.75fr_.95fr_.95fr_.85fr_.75fr] items-center border-l-[5px] border-[#203B75] px-3 py-3 text-left"
-                  >
-                    <span className="text-[25px] font-medium tracking-tight">{fix.ident}</span>
-                    <span className="text-[16px]">{dtd}</span>
-                    <span className="text-[16px] underline decoration-dotted underline-offset-4">{plannedTime}</span>
-                    <span className="mx-1 h-[38px] rounded-md bg-[#F7F7F7]" />
-                    <span className="text-[17px]">{mfob === "-" ? "-" : formatNumber(mfob)}</span>
-                    <span className="mx-1 h-[38px] rounded-md bg-[#F7F7F7]" />
-                    <span className="text-[15px]">{fuelDelta === "-" ? "-" : fuelDelta}</span>
-                    <span className="text-right text-[23px] text-gray-700">➜</span>
-                  </button>
-
-                  {/* airway / segment strip */}
-                  <div className="grid grid-cols-4 border-t border-[#C2C3C5] bg-[#F1F1F1] px-3 py-1 text-[13px] font-semibold">
-                    <span>{airway}</span>
-                    <span>{firstValue(fix.wind_dir, "-")}{windDir !== "-" ? `M/${windSpd}T` : ""}</span>
-                    <span>DTW {legTime === "-" ? "-" : legTime.replace(":", "")}</span>
-                    <span>{altitude}</span>
-                  </div>
-
-                  {selected && (
-                    <div className="grid grid-cols-3 gap-x-5 gap-y-2 border-t border-[#C2C3C5] bg-[#E4E4E4] px-4 py-3 text-[14px]">
-                      <div>
-                        <div>Coordinate {coordLat} {coordLon}</div>
-                        <div className="mt-1">Windshear Rate {firstValue(fix.windshear, fix.windshear_rate, "NA")}</div>
-                      </div>
-                      <div>
-                        <div>OAT {oat}{oat !== "-" ? " C" : ""}</div>
-                        <div className="mt-1">GS/TAS {gs}/{tas}</div>
-                      </div>
-                      <div>
-                        <div>Wind {windDir}/{windSpd}</div>
-                        <div className="mt-1">IAS/Mach {ias}/{mach}</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {fixes.length > 0 && (
-          <div className="mx-3 mt-3 rounded-md border border-[#C5C6C8] bg-[#F1F1F1] px-4 py-3 text-center text-[14px] font-semibold text-gray-700">
-            {fixes.filter((fix) => String(fix.skipped || "").toLowerCase() === "true").length
-              ? `Show skipped waypoints (${fixes.filter((fix) => String(fix.skipped || "").toLowerCase() === "true").length})`
-              : `${fixes.length} waypoints · ${effectiveAircraft} · ${effectiveFlight}`}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DynamicRoutePreview({ flight, compact = false }) {
-  const fixes = (flight?.navlog || [])
-    .map((fix, index) => ({
-      ident: firstValue(fix.ident, fix.fix_ident, fix.name, `FIX${index + 1}`),
-      lat: fixLat(fix),
-      lon: fixLon(fix),
-      raw: fix,
-    }))
-    .filter((fix) => Number.isFinite(fix.lat) && Number.isFinite(fix.lon));
-
-  const airports = [
-    {
-      ident: flight?.origin?.icao,
-      lat: flight?.origin?.lat,
-      lon: flight?.origin?.lon,
-      kind: "origin",
-      label: flight?.origin?.name,
-    },
-    {
-      ident: flight?.destination?.icao,
-      lat: flight?.destination?.lat,
-      lon: flight?.destination?.lon,
-      kind: "destination",
-      label: flight?.destination?.name,
-    },
-    ...(flight?.alternates || []).map((apt, index) => ({
-      ident: apt.icao,
-      lat: apt.lat,
-      lon: apt.lon,
-      kind: "alternate",
-      label: apt.name,
-      index,
-    })),
-  ].filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon));
-
-  const all = [...fixes, ...airports];
-
-  const mapWidth = 900;
-  const mapHeight = compact ? 360 : 720;
-
-  if (!all.length) {
-    return (
-      <div className="relative h-full w-full overflow-hidden bg-[#E8E7E1]">
-        <AviationRaster width={mapWidth} height={mapHeight} />
-        <div className="absolute inset-0 flex items-center justify-center text-[12px] text-gray-600">
-          No detailed position data in this OFP
-        </div>
-      </div>
-    );
-  }
-
-  const lats = all.map((p) => p.lat);
-  const lons = all.map((p) => p.lon);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLon = Math.min(...lons);
-  const maxLon = Math.max(...lons);
-
-  const latPad = Math.max((maxLat - minLat) * 0.16, 0.45);
-  const lonPad = Math.max((maxLon - minLon) * 0.16, 0.45);
-  const view = {
-    minLat: minLat - latPad,
-    maxLat: maxLat + latPad,
-    minLon: minLon - lonPad,
-    maxLon: maxLon + lonPad,
-  };
-
-  const project = (lat, lon) => ({
-    x: ((lon - view.minLon) / Math.max(0.0001, view.maxLon - view.minLon)) * mapWidth,
-    y: (1 - (lat - view.minLat) / Math.max(0.0001, view.maxLat - view.minLat)) * mapHeight,
-  });
-
-  const routePoints = fixes.length >= 2
-    ? fixes
-    : airports.filter((p) => p.kind === "origin" || p.kind === "destination");
-
-  const projectedRoute = routePoints.map((p) => project(p.lat, p.lon));
-  const pathD = projectedRoute.length
-    ? projectedRoute.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ")
-    : "";
-
-  const arrowIndexes = [];
-  for (let i = 0; i < projectedRoute.length - 1; i++) {
-    if (i === 0 || i === projectedRoute.length - 2 || i % Math.max(1, Math.floor(projectedRoute.length / 7)) === 0) {
-      arrowIndexes.push(i);
-    }
-  }
-
-  const coordLabels = [];
-  for (let i = 0; i <= 4; i++) {
-    const lat = minLat + (maxLat - minLat) * (i / 4);
-    const lon = minLon + (maxLon - minLon) * (i / 4);
-    coordLabels.push({ lat, lon, labelLat: `N${Math.abs(lat).toFixed(0)}°`, labelLon: `W${Math.abs(lon).toFixed(0)}°` });
-  }
-
-  return (
-    <div className="relative h-full w-full overflow-hidden bg-[#E9E8E2]">
-      <AviationRaster width={mapWidth} height={mapHeight} />
-
-      {/* Map UI overlay */}
-      {!compact && (
-        <>
-          <div className="absolute left-3 top-3 z-10 flex items-center gap-2">
-            <span className="rounded-md border border-[#B8BABD] bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-[#35414E] shadow-sm">
-              FLIGHT
-            </span>
-            <span className="rounded-md border border-[#B8BABD] bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-[#35414E] shadow-sm">
-              NAVIGATION
-            </span>
-            <span className="rounded-md border border-[#B8BABD] bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-[#35414E] shadow-sm">
-              MAP
-            </span>
-          </div>
-
-          <div className="absolute right-3 top-3 z-10 flex flex-col gap-1 rounded-md border border-[#B8BABD] bg-white/90 p-1 shadow-sm">
-            <button className="h-7 w-7 text-[16px] text-gray-700">+</button>
-            <button className="h-7 w-7 border-t border-gray-200 text-[16px] text-gray-700">−</button>
-          </div>
-        </>)}
-
-      <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${mapWidth} ${mapHeight}`} preserveAspectRatio="none">
-        <defs>
-          <filter id="routeShadow" x="-20%" y="-20%" width="140%" height="140%">
-            <feDropShadow dx="0" dy="1" stdDeviation="1" floodColor="#ffffff" floodOpacity=".9" />
-          </filter>
-        </defs>
-
-        {/* Coordinate raster labels */}
-        {coordLabels.map((item, index) => {
-          const left = project(item.lat, minLon);
-          const bottom = project(minLat, item.lon);
-          return (
-            <g key={`coord-${index}`}>
-              <text x={8} y={left.y + 4} fontSize="11" fill="#65747A">{item.labelLat}</text>
-              <text x={bottom.x - 14} y={mapHeight - 8} fontSize="10" fill="#65747A">{item.labelLon}</text>
-            </g>
-          );
-        })}
-
-        {/* Route */}
-        {pathD && (
+      {/* Route */}
+      {view && path && (
+        <svg
+          className="pointer-events-none absolute inset-0 h-full w-full"
+          viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`}
+          preserveAspectRatio="none"
+        >
           <path
-            d={pathD}
+            d={path}
             fill="none"
             stroke="#FFFFFF"
-            strokeWidth="7"
+            strokeWidth="6"
             strokeLinecap="round"
             strokeLinejoin="round"
-            opacity=".9"
-            filter="url(#routeShadow)"
+            opacity="0.95"
           />
-        )}
-        {pathD && (
           <path
-            d={pathD}
+            d={path}
             fill="none"
-            stroke="#111111"
-            strokeWidth="3.2"
+            stroke="#151515"
+            strokeWidth="3"
             strokeLinecap="round"
             strokeLinejoin="round"
           />
-        )}
 
-        {/* Direction arrows: orange body + white inner arrow */}
-        {arrowIndexes.map((i) => {
-          const a = projectedRoute[i];
-          const b = projectedRoute[i + 1];
-          const x = (a.x + b.x) / 2;
-          const y = (a.y + b.y) / 2;
-          const angle = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
-          return (
-            <g key={`arrow-${i}`} transform={`translate(${x} ${y}) rotate(${angle})`}>
-              <path d="M -10 -7 L 10 0 L -10 7 Z" fill="#E59A3A" stroke="#FFFFFF" strokeWidth="2" />
-              <path d="M -5 -3 L 4 0 L -5 3 Z" fill="#FFFFFF" />
+          {/* Small orange / white direction arrows */}
+          {routeArrows.map((arrow, index) => (
+            <g
+              key={`route-arrow-${index}`}
+              transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`}
+            >
+              <polygon
+                points="-9,-5 6,0 -9,5 -5,0"
+                fill="#F09B38"
+                stroke="#FFFFFF"
+                strokeWidth="2"
+              />
+              <polygon
+                points="-4,-2 4,0 -4,2 -2,0"
+                fill="#FFFFFF"
+              />
             </g>
-          );
-        })}
+          ))}
+        </svg>
+      )}
 
-        {/* Waypoints */}
-        {fixes.map((fix, index) => {
-          const point = project(fix.lat, fix.lon);
-          return (
-            <g key={`${fix.ident}-${index}`}>
-              <circle cx={point.x} cy={point.y} r="4.5" fill="#FFFFFF" stroke="#344D70" strokeWidth="2" />
-              <circle cx={point.x} cy={point.y} r="1.5" fill="#344D70" />
-            </g>
-          );
-        })}
+      {/* Airports: clean Lido markers, no waypoint dots */}
+      {airportPoints.map((airport, index) => {
+        const color =
+          airport.color === "green"
+            ? "#65C529"
+            : airport.color === "orange"
+              ? "#F0A040"
+              : "#D28745";
 
-        {/* Airports */}
-        {airports.map((airport, index) => {
-          const point = project(airport.lat, airport.lon);
-          const fill =
-            airport.kind === "origin"
-              ? "#69C936"
-              : airport.kind === "destination"
-                ? "#F29A36"
-                : "#FFFFFF";
-          const stroke =
-            airport.kind === "alternate"
-              ? "#E59A3A"
-              : "#FFFFFF";
-
-          return (
-            <g key={`${airport.ident}-${index}`}>
-              {airport.kind === "alternate" && (
-                <path
-                  d={`M ${point.x} ${point.y - 13} L ${point.x + 8} ${point.y} L ${point.x} ${point.y + 13} L ${point.x - 8} ${point.y} Z`}
-                  fill="#FFFFFF"
-                  stroke="#E59A3A"
-                  strokeWidth="2"
-                />
-              )}
-              {airport.kind !== "alternate" && (
-                <>
-                  <circle cx={point.x} cy={point.y} r="13" fill={fill} stroke={stroke} strokeWidth="3" />
-                  <circle cx={point.x} cy={point.y} r="5" fill="#FFFFFF" opacity=".95" />
-                </>
-              )}
-            </g>
-          );
-        })}
-      </svg>
-
-      {/* Airport labels */}
-      {airports.map((airport, index) => {
-        const point = project(airport.lat, airport.lon);
-        const left = `${(point.x / mapWidth) * 100}%`;
-        const top = `${(point.y / mapHeight) * 100}%`;
-        const textColor =
-          airport.kind === "origin"
-            ? "#4E9E25"
-            : airport.kind === "destination"
-              ? "#C77920"
-              : "#8A6427";
+        const isPrimary =
+          airport.color === "green" || airport.color === "orange";
 
         return (
           <div
-            key={`label-${airport.ident}-${index}`}
-            className="absolute -translate-x-1/2 -translate-y-[145%] text-center pointer-events-none"
-            style={{ left, top }}
+            key={`${airport.kind}-${airport.label}-${index}`}
+            className="absolute -translate-x-1/2 -translate-y-1/2"
+            style={{
+              left: airport.point.x,
+              top: airport.point.y,
+              zIndex: 25,
+            }}
           >
-            <div className="rounded bg-white/85 px-1.5 py-0.5 text-[11px] font-bold shadow-sm" style={{ color: textColor }}>
-              {airport.ident}
+            <div className="relative flex flex-col items-center">
+              <div
+                className={`flex items-center justify-center rounded-full border-2 border-white shadow-[0_1px_4px_rgba(0,0,0,.35)] ${
+                  isPrimary ? "h-8 w-8" : "h-6 w-6"
+                }`}
+                style={{ backgroundColor: color }}
+              >
+                {isPrimary && (
+                  <div className="h-2.5 w-2.5 rounded-full border border-white/90 bg-white/20" />
+                )}
+              </div>
+              {showLabels && (
+                <div
+                  className="mt-[-1px] rounded-[2px] bg-white/92 px-1.5 py-[2px] text-[10px] font-bold shadow-[0_1px_2px_rgba(0,0,0,.2)]"
+                  style={{ color }}
+                >
+                  {airport.label}
+                </div>
+              )}
             </div>
           </div>
         );
       })}
 
-      {!compact && (
+      {/* Geography-like labels / chart chrome */}
+      {view && (
         <>
-          <div className="absolute bottom-2 left-2 rounded-md border border-[#C1C3C5] bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-gray-600 shadow-sm">
-            ROUTE · NAV · AIRPORTS
+          <div className="pointer-events-none absolute left-[38%] top-[18%] rotate-[-7deg] text-[13px] italic tracking-wide text-[#7F8178]/65">
+            {importedMapRegion(flight)}
           </div>
-          <div className="absolute bottom-2 right-2 rounded-md border border-[#C1C3C5] bg-white/90 px-2.5 py-1 text-[10px] text-gray-600 shadow-sm">
-            {fixes.length} WPT
+          <div className="pointer-events-none absolute bottom-[17%] left-[42%] text-[11px] italic text-[#7F8178]/60">
+            ENROUTE
           </div>
         </>
+      )}
+
+      {showLabels && (
+        <div className="absolute left-2 top-2 rounded-[3px] bg-white/88 px-2 py-1 text-[10px] font-semibold text-gray-600 shadow">
+          {compact ? "ROUTE" : "ENROUTE MAP"}
+        </div>
+      )}
+
+      {onToggleLabels && (
+        <button
+          onClick={onToggleLabels}
+          className="absolute right-2 top-2 rounded-[3px] bg-white/90 px-2 py-1 text-[10px] font-semibold text-gray-600 shadow"
+        >
+          {showLabels ? "Hide labels" : "Show labels"}
+        </button>
+      )}
+
+      {!compact && (
+        <div className="absolute bottom-2 right-2 rounded-[3px] bg-white/88 px-2 py-1 text-[9px] text-gray-500 shadow">
+          © OpenStreetMap contributors
+        </div>
       )}
     </div>
   );
 }
 
-function AviationRaster({ width = 900, height = 720 }) {
-  const vertical = [];
-  const horizontal = [];
-  for (let x = 0; x <= width; x += width / 10) vertical.push(x);
-  for (let y = 0; y <= height; y += height / 8) horizontal.push(y);
-
-  return (
-    <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
-      <rect width={width} height={height} fill="#E9E8E2" />
-
-      {/* water */}
-      <path
-        d={`M ${width * .76} 0
-            C ${width * .69} ${height * .16}, ${width * .83} ${height * .24}, ${width * .74} ${height * .38}
-            C ${width * .65} ${height * .52}, ${width * .78} ${height * .68}, ${width * .71} ${height}
-            L ${width} ${height} L ${width} 0 Z`}
-        fill="#D4E5EC"
-      />
-
-      {/* simplified geographic contours */}
-      <path d={`M 0 ${height*.25} C ${width*.18} ${height*.12}, ${width*.35} ${height*.34}, ${width*.52} ${height*.20} S ${width*.74} ${height*.10}, ${width} ${height*.23}`} fill="none" stroke="#A8BEA4" strokeWidth="2" />
-      <path d={`M 0 ${height*.48} C ${width*.18} ${height*.36}, ${width*.32} ${height*.60}, ${width*.52} ${height*.47} S ${width*.75} ${height*.40}, ${width} ${height*.58}`} fill="none" stroke="#A8BEA4" strokeWidth="2" />
-      <path d={`M 0 ${height*.72} C ${width*.17} ${height*.61}, ${width*.36} ${height*.80}, ${width*.55} ${height*.67} S ${width*.77} ${height*.62}, ${width} ${height*.78}`} fill="none" stroke="#A8BEA4" strokeWidth="2" />
-
-      {/* aviation raster */}
-      {vertical.map((x, i) => (
-        <line key={`v-${i}`} x1={x} y1="0" x2={x} y2={height} stroke="#93A09A" strokeWidth={i % 5 === 0 ? 1.4 : .8} opacity={i % 5 === 0 ? .65 : .38} />
-      ))}
-      {horizontal.map((y, i) => (
-        <line key={`h-${i}`} x1="0" y1={y} x2={width} y2={y} stroke="#93A09A" strokeWidth={i % 4 === 0 ? 1.4 : .8} opacity={i % 4 === 0 ? .65 : .38} />
-      ))}
-
-      {/* chart labels */}
-      <text x={width*.25} y={height*.18} fontSize="17" fill="#7C8A82" fontStyle="italic">APPALACHIAN MOUNTAINS</text>
-      <text x={width*.45} y={height*.83} fontSize="14" fill="#7C8A82" fontStyle="italic">UNITED STATES</text>
-      <text x={width*.63} y={height*.90} fontSize="14" fill="#7C8A82" fontStyle="italic">MARYLAND, MD</text>
-    </svg>
-  );
+function importedMapRegion(flight) {
+  const route = String(flight?.route || "").toUpperCase();
+  if (route.includes("EDDL") || route.includes("EDDF")) return "GERMANY";
+  return "ENROUTE";
 }
 
+function fitMapView(points, width, height) {
+  if (!points.length || !width || !height) return null;
+  const lats = points.map((p) => p.lat);
+  const lons = points.map((p) => p.lon);
+
+  let minLat = Math.min(...lats);
+  let maxLat = Math.max(...lats);
+  let minLon = Math.min(...lons);
+  let maxLon = Math.max(...lons);
+
+  if (Math.abs(maxLat - minLat) < 0.25) {
+    minLat -= 0.12;
+    maxLat += 0.12;
+  }
+  if (Math.abs(maxLon - minLon) < 0.4) {
+    minLon -= 0.2;
+    maxLon += 0.2;
+  }
+
+  const zoom = Math.max(
+    2,
+    Math.min(12, chooseZoom(minLat, maxLat, minLon, maxLon, width, height))
+  );
+
+  const centerLat = (minLat + maxLat) / 2;
+  const centerLon = (minLon + maxLon) / 2;
+  const center = geoToWorld(centerLat, centerLon, zoom);
+
+  return {
+    zoom,
+    bounds: { minLat, maxLat, minLon, maxLon },
+    topLeft: {
+      x: center.x - width / 2,
+      y: center.y - height / 2,
+    },
+  };
+}
+
+function chooseZoom(minLat, maxLat, minLon, maxLon, width, height) {
+  for (let z = 12; z >= 2; z -= 1) {
+    const a = geoToWorld(maxLat, minLon, z);
+    const b = geoToWorld(minLat, maxLon, z);
+    const spanX = Math.abs(b.x - a.x) * 1.2;
+    const spanY = Math.abs(b.y - a.y) * 1.2;
+    if (spanX <= width && spanY <= height) return z;
+  }
+  return 2;
+}
+
+function geoToWorld(lat, lon, zoom) {
+  const size = 256 * 2 ** zoom;
+  const clampedLat = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const x = ((lon + 180) / 360) * size;
+  const sin = Math.sin((clampedLat * Math.PI) / 180);
+  const y =
+    (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * size;
+  return { x, y };
+}
+
+function makeTiles(zoom, bounds, width, height) {
+  const nw = geoToWorld(bounds.maxLat, bounds.minLon, zoom);
+  const se = geoToWorld(bounds.minLat, bounds.maxLon, zoom);
+  const minX = Math.floor(nw.x / 256);
+  const maxX = Math.floor(se.x / 256);
+  const minY = Math.floor(nw.y / 256);
+  const maxY = Math.floor(se.y / 256);
+  const center = geoToWorld(
+    (bounds.minLat + bounds.maxLat) / 2,
+    (bounds.minLon + bounds.maxLon) / 2,
+    zoom
+  );
+  const topLeft = {
+    x: center.x - width / 2,
+    y: center.y - height / 2,
+  };
+  const tiles = [];
+  const tileCount = 2 ** zoom;
+
+  for (
+    let y = Math.max(0, minY - 1);
+    y <= Math.min(tileCount - 1, maxY + 1);
+    y += 1
+  ) {
+    for (let x = minX - 1; x <= maxX + 1; x += 1) {
+      const wrappedX = ((x % tileCount) + tileCount) % tileCount;
+      tiles.push({
+        z: zoom,
+        x: wrappedX,
+        y,
+        left: x * 256 - topLeft.x,
+        top: y * 256 - topLeft.y,
+        url: `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${y}.png`,
+      });
+    }
+  }
+  return tiles;
+}
+
+function DashboardWeatherCard({ airports, selected, onChange, live, loading, onRefresh }) {
+  const entry = airports.find((item) => item.id === selected) || airports[0];
+  const code = airportCode(entry?.airport);
+  const current = live?.[code];
+  return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><div className="flex items-center justify-between"><h2 className="text-center text-[19px] font-semibold">Weather</h2><button onClick={onRefresh} className="rounded p-1 text-gray-500 hover:bg-black/5"><RefreshCw size={15} className={loading ? "animate-spin" : ""} /></button></div><DynamicAirportTabs airports={airports} selected={selected} onChange={onChange} /><WeatherPanel airport={entry?.airport} importedMetar={entry?.metar} importedTaf={entry?.taf} live={current} loading={loading} /></section>;
+}
+
+function DashboardNotamCard({ flight, airports, selected, onChange, live, loading }) {
+  const entry = airports.find((item) => item.id === selected) || airports[0];
+  const code = airportCode(entry?.airport);
+  return <section className="flex h-full min-h-0 flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">NOTAM & Weather</h2><DynamicAirportTabs airports={airports} selected={selected} onChange={onChange} /><div className="mt-3 min-h-[220px] max-h-[300px] overflow-y-auto rounded-md bg-white">{flight.notams?.length ? flight.notams.map((notam, index) => <NotamItem key={`${index}-${notam.slice(0, 20)}`} text={notam} last={index === flight.notams.length - 1} />) : <div className="px-4 py-8 text-center text-[13px] text-gray-500">No NOTAMs were returned in this OFP.</div>}</div><div className="mt-3"><WeatherPanel airport={entry?.airport} importedMetar={entry?.metar} importedTaf={entry?.taf} live={live?.[code]} loading={loading} /></div><button className="mt-3 h-[50px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">View NOTAMs for All Airports</button></section>;
+}
+
+function DynamicAirportTabs({ airports, selected, onChange }) {
+  return <div className="mt-3 flex gap-1 overflow-x-auto rounded-lg bg-[#D0D0D2] p-1">{airports.map((airport) => <button key={airport.id} onClick={() => onChange(airport.id)} className={`min-w-[98px] flex-1 whitespace-nowrap rounded-md px-3 py-2 text-[12px] font-semibold ${selected === airport.id ? "bg-white shadow-sm" : "text-gray-600"}`}>{airport.label}</button>)}</div>;
+}
+
+function WeatherPanel({ airport, importedMetar, importedTaf, live, loading }) {
+  const code = airportCode(airport);
+  const metar = firstValue(live?.metar, importedMetar, "No METAR available");
+  const taf = firstValue(live?.taf, importedTaf, "No TAF available");
+  return <div className="mt-3 overflow-hidden rounded-md bg-white"><div className="border-b border-gray-200 px-3 py-3"><div className="text-[16px] font-bold">{airport?.name || "UNKNOWN AIRPORT"}</div><div className="text-[12px] text-gray-500">{code}</div></div><div className="space-y-2 px-3 py-3"><WeatherRow label="Ceiling:" value="-" /><WeatherRow label="Visibility:" value={weatherVisibility(metar)} /><WeatherRow label="Wind:" value={weatherWind(metar)} /><WeatherRow label="Temperature:" value={weatherTemp(metar)} /></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 flex items-center justify-between text-[12px] text-gray-500"><span>METAR</span><span>{loading ? "updating..." : "current / OFP fallback"}</span></div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{metar}</pre></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 text-[12px] text-gray-500">TAF</div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{taf}</pre></div><button className="m-3 h-[45px] w-[calc(100%-24px)] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">View Weather Charts</button></div>;
+}
+
+function FuelSummaryCard({ flight, fuelOrdered }) { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Fuel</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><div className="flex items-center justify-between bg-[#F5F5F5] px-3 py-3"><span className="text-[15px] text-gray-600">Planned Fuel (OFP):</span><strong className="text-[20px]">{flight.rampFuel || flight.takeoffFuel || "-"} kg</strong></div><div className="space-y-1 px-3 py-3"><FuelRow label="Trip Fuel:" value={`${flight.tripFuel || "-"} kg`} /><FuelRow label="Alternate:" value={`${flight.alternateFuel || "-"} kg`} /><FuelRow label="Reserve:" value={`${flight.reserveFuel || "-"} kg`} /><FuelRow label="Taxi:" value={`${flight.taxiFuel || "-"} kg`} /><FuelRow label="Landing:" value={`${flight.landingFuel || "-"} kg`} /></div></div><div className={`mt-3 rounded-md px-3 py-3 text-[13px] font-semibold ${fuelOrdered ? "bg-[#E6F6DA] text-[#17500D]" : "bg-white text-gray-600"}`}>{fuelOrdered ? "Fuel order: ORDERED" : "Fuel order: NOT ORDERED"}</div><button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open Fuel</button></section>; }
+
+function DocumentsCard() { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Additional Documents</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><DocumentRow title="Crew / Flight Documents" date="Imported from current OFP" /><DocumentRow title="MEL Restrictions" date="Operational documents" /><DocumentRow title="OFP / Flight Release" date="Current SimBrief release" last /></div><button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">View All Documents</button></section>; }
+
+function ContactCard() { return <section className="flex h-full flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Contact Information</h2><div className="mt-3 flex flex-1 flex-col overflow-hidden rounded-md bg-white"><div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">CREW</div><div className="px-3 py-3"><div className="text-[13px] text-gray-600">Pilot in Command / Captain</div><div className="mt-1 text-[14px] font-semibold">{window?.navigator ? "Current User" : "Pilot"}</div></div><div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">DISPATCH</div><div className="flex items-center justify-between px-3 py-3"><div><div className="text-[14px] font-semibold">SimBrief</div><div className="text-[12px] text-gray-600">Latest OFP</div></div><div className="flex gap-2"><button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white"><Phone size={18} /></button><button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white"><MessageSquare size={18} /></button></div></div><div className="border-t border-gray-200 px-3 py-4 text-[13px] text-gray-600">Data shown here is based on the imported flight.</div></div></section>; }
+
+function AlternateCard({ airport, index, weatherLive }) { return <div className="rounded-lg border border-gray-200 bg-[#F8F8F8] p-4"><div className="flex items-center justify-between"><div><div className="text-[16px] font-bold">{airportCode(airport)}</div><div className="text-[12px] text-gray-500">Alternate {index + 1}</div></div><span className="rounded-full bg-[#8064A2] px-2.5 py-1 text-[10px] font-bold text-white">ALTN</span></div><div className="mt-3 space-y-2"><InfoRow label="Runway" value={airport.runway || "-"} /><InfoRow label="METAR" value={weatherLive?.metar || "OFP / unavailable"} /><InfoRow label="TAF" value={weatherLive?.taf || "OFP / unavailable"} /></div></div>; }
+
+function MapAirportButton({ airport, code, role, selected, onClick, color }) { const dot = color === "green" ? "bg-[#65C52D]" : color === "orange" ? "bg-[#F2A243]" : "bg-[#8064A2]"; return <button onClick={onClick} className={`flex w-full items-center gap-3 px-4 py-3 text-left ${selected ? "bg-[#7A8EA8] text-white" : "hover:bg-black/5"}`}><span className={`h-3 w-3 rounded-full ${dot}`} /><span className="min-w-0"><span className="block text-[14px] font-bold">{code || "----"}</span><span className={`block text-[11px] ${selected ? "text-gray-200" : "text-gray-500"}`}>{role} · {airport?.name || "Unknown"}</span></span></button>; }
+
+function MapDetail({ airportCode: code, flight, alternates, tab, weatherLive }) {
+  const all = [flight.origin, flight.destination, ...alternates];
+  const airport = all.find((apt) => airportCode(apt) === code) || {};
+  if (tab === "WX") {
+    const importedMetar = firstValue(airport.metar, airportCode(airport) === airportCode(flight.origin) ? flight.originMetar : airportCode(airport) === airportCode(flight.destination) ? flight.destinationMetar : flight.alternateMetar);
+    const importedTaf = firstValue(airport.taf, airportCode(airport) === airportCode(flight.origin) ? flight.originTaf : airportCode(airport) === airportCode(flight.destination) ? flight.destinationTaf : flight.alternateTaf);
+    return <WeatherPanel airport={airport} importedMetar={importedMetar} importedTaf={importedTaf} live={weatherLive} />;
+  }
+  return <div className="space-y-2">{flight.notams?.length ? flight.notams.map((n, i) => <NotamItem key={i} text={n} last={i === flight.notams.length - 1} />) : <div className="py-8 text-center text-[13px] text-gray-500">No NOTAMs were returned in this OFP.</div>}</div>;
+}
+
+function NavLogRow({ fix, index }) { return <tr className="hover:bg-gray-50"><td className="px-3 py-3">{index + 1}</td><td className="px-3 py-3 font-semibold">{getIdent(fix, `FIX${index + 1}`)}</td><td className="px-3 py-3">{firstValue(fix.stage, fix.phase, "-")}</td><td className="px-3 py-3">{fixAltitude(fix)}</td><td className="px-3 py-3">{firstValue(fix.ind_airspeed, fix.ias, "-")}</td><td className="px-3 py-3">{firstValue(fix.true_airspeed, fix.tas, "-")}</td><td className="px-3 py-3">{firstValue(fix.mach, "-")}</td><td className="px-3 py-3">{firstValue(fix.groundspeed, fix.gs, "-")}</td><td className="px-3 py-3">{fixWind(fix)}</td><td className="px-3 py-3">{firstValue(fix.wind_component, fix.wc, "-")}</td><td className="px-3 py-3">{fixTemperature(fix)}</td><td className="px-3 py-3">{firstValue(fix.distance, "-")}</td><td className="px-3 py-3">{formatNavTime(firstValue(fix.time_leg, fix.leg_time, fix.ete))}</td><td className="px-3 py-3">{formatNavTime(firstValue(fix.time_total, fix.time, fix.total_time))}</td><td className="px-3 py-3">{firstValue(fix.fuel_leg, fix.fuel, fix.fob, "-")}</td><td className="px-3 py-3">{firstValue(fix.fuel_totalused, fix.fuel_plan_onboard, fix.efob, fix.fob, "-")}</td><td className="px-3 py-3">{firstValue(fix.via_airway, fix.airway, "-")}</td></tr>; }
+
+function BriefingValue({ label, value }) { return <div className="min-w-0"><div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-gray-500">{label}</div><div className="truncate text-[17px] font-medium text-[#25282C]">{value}</div></div>; }
+function WeightRow({ name, planned, actual, operational, structural }) { return <div className="grid min-h-[56px] grid-cols-[1.2fr_1fr_1fr_1.1fr_1.1fr] items-center"><span className="text-[15px] font-medium">{name}</span><span className="text-[16px] font-medium">{planned || "-"}</span><span className="text-[16px]">{actual || "-"}</span><span className="text-[16px] text-center">{operational || "-"}</span><span className="text-right text-[16px] font-medium">{structural || "-"}</span></div>; }
+function FuelLine({ label, time, fuel, bold = false }) { return <div className="grid grid-cols-[1fr_180px_100px] items-center py-2.5"><span className={`text-[14px] ${bold ? "font-semibold" : ""}`}>{label}</span><span className={`text-right text-[14px] ${bold ? "font-semibold" : ""}`}>{time}</span><span className={`text-right text-[14px] ${bold ? "font-semibold" : ""}`}>{fuel || "-"}</span></div>; }
+function FuelRow({ label, value }) { return <div className="flex items-center justify-between"><span className="text-[13px] text-gray-600">{label}</span><span className="text-[13px] font-semibold">{value}</span></div>; }
+function TimeRow({ label, value }) { return <div className="flex justify-between py-[2px]"><span className="text-[12px] text-gray-500">{label}</span><span className="text-[13px] font-semibold">{value}</span></div>; }
+function WeatherRow({ label, value }) { return <div className="flex justify-between"><span className="text-[13px] text-gray-500">{label}</span><span className="max-w-[70%] truncate text-right text-[13px] font-semibold">{value}</span></div>; }
+function NotamItem({ text, last }) { return <div className={`relative px-3 py-3 text-[12px] leading-[1.55] ${!last ? "border-b border-gray-200" : ""}`}><Flag size={17} className="absolute right-3 top-3 text-gray-300" fill="currentColor" /><div className="pr-7">{text}</div></div>; }
+function DocumentRow({ title, date, last }) { return <div className={`px-3 py-3 ${!last ? "border-b border-gray-200" : ""}`}><div className="text-[14px]">{title}</div><div className="mt-1 text-[11px] text-gray-500">{date}</div></div>; }
+function InfoPanel({ title, children }) { return <section className="rounded-lg border border-[#D0D0D0] bg-white p-4"><div className="mb-3 text-[14px] font-semibold">{title}</div>{children}</section>; }
+function InfoRow({ label, value }) { return <div className="flex items-start justify-between gap-4 border-b border-gray-100 py-2 last:border-0"><span className="text-[12px] text-gray-500">{label}</span><span className="max-w-[65%] break-words text-right text-[12px] font-semibold">{value}</span></div>; }
+function formatAltitudeValue(value) { if (value === undefined || value === null || value === "") return "-"; const raw = String(value); if (/FL/i.test(raw)) return raw.toUpperCase(); const n = Number(value); return Number.isFinite(n) && n >= 1000 ? `FL${Math.round(n / 100)}` : raw; }
+function formatFuelTime(value) { if (!value) return "--:--"; return formatDuration(value); }
+function formatNavTime(value) { if (value === undefined || value === null || value === "") return "-"; if (typeof value === "string" && /^\d{1,2}:\d{2}/.test(value)) return value.slice(0, 5); const n = Number(value); if (Number.isFinite(n)) return formatDuration(n); return String(value); }
+function effectiveRouteText(origin, route, destination) { return `${origin} → ${route || "AS FILED"} → ${destination}`; }
+function weatherWind(metar) { const match = String(metar || "").match(/\b(\d{3}|VRB)(\d{2,3})KT\b/); return match ? `${match[1]}/${match[2]}` : "-"; }
+function weatherVisibility(metar) { const match = String(metar || "").match(/\b(?:P)?(\d{1,2}(?:SM|KM|M))\b/); return match ? match[1] : "-"; }
+function weatherTemp(metar) { const match = String(metar || "").match(/\s(M\d{2}|\d{2})\/(M\d{2}|\d{2})\s/); if (!match) return "-"; return `${match[1].replace("M", "-")}°/${match[2].replace("M", "-")}°`; }
