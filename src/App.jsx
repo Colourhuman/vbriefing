@@ -34,6 +34,12 @@ const SIMBRIEF_STORAGE_KEY = "virtual-lido-simbrief-user";
 const SIMBRIEF_OFP_STORAGE_KEY = "virtual-lido-simbrief-ofp-v3";
 const SIMBRIEF_FUEL_ORDER_KEY = "virtual-lido-fuel-ordered-v3";
 
+// Closed pre-release access. Replace/remove this gate before public release.
+const PRE_RELEASE_ACCOUNTS = [
+  { username: "Milo", password: "Milo2401" },
+  { username: "Leon", password: "Goat" },
+];
+
 // Publicly available simplified FIR/UIR GeoJSON used only for visual map boundaries.
 // We render UIRs only; no labels are drawn. The dataset notes that its world file is
 // focused on Europe and may not reflect the latest operational airspace changes.
@@ -812,135 +818,6 @@ if (typeof document !== "undefined") {
   }
 }
 
-const PRE_RELEASE_AUTH_KEY = "vbriefing-prerelease-authenticated";
-
-// PRE-RELEASE ACCESS LIST
-// Add/remove approved accounts here before publishing.
-// IMPORTANT: this is a client-side gate, not real security. Credentials are part of the
-// frontend bundle and can be inspected by a determined user. For a truly private beta,
-// move authentication to the Render/backend layer later.
-const PRE_RELEASE_ACCOUNTS = [
-  { username: "pilot", password: "CHANGE_THIS_PASSWORD" },
-];
-
-function safeSessionGet(key) {
-  try {
-    return sessionStorage.getItem(key) === "true";
-  } catch {
-    return false;
-  }
-}
-
-function safeSessionSet(key, value) {
-  try {
-    sessionStorage.setItem(key, value ? "true" : "false");
-  } catch {
-    // Session storage can be disabled; the login still works for the current render.
-  }
-}
-
-function PreReleaseLogin({ onAuthenticated }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-
-  function submit(event) {
-    event.preventDefault();
-    const normalized = username.trim().toLowerCase();
-    const account = PRE_RELEASE_ACCOUNTS.find(
-      (entry) => entry.username.trim().toLowerCase() === normalized && entry.password === password
-    );
-
-    if (!account) {
-      setError("Account name oder Passwort ist nicht korrekt.");
-      setPassword("");
-      return;
-    }
-
-    setError("");
-    safeSessionSet(PRE_RELEASE_AUTH_KEY, true);
-    onAuthenticated();
-  }
-
-  return (
-    <div className="flex min-h-[100dvh] w-full items-center justify-center bg-[#E5E7EB] px-5 py-8 text-[#25282C]">
-      <main className="w-full max-w-[430px]">
-        <section className="overflow-hidden rounded-xl border border-[#D0D0D0] bg-white shadow-sm">
-          <div className="border-b border-[#D0D0D0] bg-[#D1D3D4] px-6 py-5">
-            <div className="text-[22px] font-semibold tracking-[-0.02em]">vBriefing</div>
-            <div className="mt-1 text-[12px] font-medium uppercase tracking-[0.12em] text-gray-600">Pre-release access</div>
-          </div>
-
-          <form onSubmit={submit} className="p-6 sm:p-7">
-            <div className="mb-6">
-              <h1 className="text-[21px] font-semibold">Sign in</h1>
-              <p className="mt-2 text-[13px] leading-5 text-gray-500">
-                vBriefing befindet sich aktuell im geschlossenen Pre-release. Bitte melde dich mit einem freigeschalteten Account an.
-              </p>
-            </div>
-
-            <div className="space-y-4">
-              <label className="block">
-                <span className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-gray-500">Account name</span>
-                <input
-                  value={username}
-                  onChange={(event) => { setUsername(event.target.value); setError(""); }}
-                  autoComplete="username"
-                  autoCapitalize="none"
-                  spellCheck="false"
-                  className="h-[46px] w-full rounded-md border border-[#C7C9CC] bg-white px-3 text-[14px] outline-none transition focus:border-[#526C9B] focus:ring-2 focus:ring-[#526C9B]/10"
-                  placeholder="Account name"
-                  required
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-2 block text-[11px] font-semibold uppercase tracking-wide text-gray-500">Password</span>
-                <div className="relative">
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={(event) => { setPassword(event.target.value); setError(""); }}
-                    autoComplete="current-password"
-                    className="h-[46px] w-full rounded-md border border-[#C7C9CC] bg-white px-3 pr-20 text-[14px] outline-none transition focus:border-[#526C9B] focus:ring-2 focus:ring-[#526C9B]/10"
-                    placeholder="Password"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((current) => !current)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-[11px] font-semibold text-gray-500 hover:bg-gray-100"
-                  >
-                    {showPassword ? "Hide" : "Show"}
-                  </button>
-                </div>
-              </label>
-            </div>
-
-            {error && (
-              <div role="alert" className="mt-4 rounded-md border border-[#E5B7B7] bg-[#FFF5F5] px-3 py-2.5 text-[12px] font-medium text-[#9A2F2F]">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="mt-6 h-[48px] w-full rounded-md bg-[#0B1E48] text-[14px] font-semibold text-white transition hover:bg-[#10295D] active:scale-[0.99]"
-            >
-              Continue to vBriefing
-            </button>
-
-            <div className="mt-5 border-t border-gray-200 pt-4 text-center text-[11px] leading-4 text-gray-400">
-              Closed pre-release · Access is limited to approved accounts
-            </div>
-          </form>
-        </section>
-      </main>
-    </div>
-  );
-}
-
 const DISPATCHER_NAMES = [
   "Alex Morgan",
   "Daniel Weber",
@@ -953,7 +830,12 @@ const DISPATCHER_NAMES = [
 ];
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => safeSessionGet(PRE_RELEASE_AUTH_KEY));
+  const [authenticated, setAuthenticated] = useState(() => {
+    try { return sessionStorage.getItem("vbriefing-prerelease-auth") === "true"; } catch { return false; }
+  });
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
   const [activeTab, setActiveTab] = useState("dashboard");
   const [dashboardPage, setDashboardPage] = useState(0);
   const [weatherAirport, setWeatherAirport] = useState("origin");
@@ -983,6 +865,7 @@ export default function App() {
   const [showRouteLabels, setShowRouteLabels] = useState(true);
   const [nightMode, setNightMode] = useState(false);
   const [weatherChartsOpen, setWeatherChartsOpen] = useState(false);
+  const [showOFPModal, setShowOFPModal] = useState(false);
   const [dispatcherName] = useState(() => DISPATCHER_NAMES[Math.floor(Math.random() * DISPATCHER_NAMES.length)]);
   const touchStartX = useRef(null);
 
@@ -1088,6 +971,30 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  function handlePreReleaseLogin(event) {
+    event.preventDefault();
+    const username = loginUsername.trim();
+    const account = PRE_RELEASE_ACCOUNTS.find((entry) => entry.username.toLowerCase() === username.toLowerCase() && entry.password === loginPassword);
+    if (!account) {
+      setLoginError("Invalid account name or password.");
+      return;
+    }
+    try { sessionStorage.setItem("vbriefing-prerelease-auth", "true"); } catch {}
+    setLoginError("");
+    setAuthenticated(true);
+  }
+
+  function acceptFlight() {
+    setChecklist((current) => ({ ...current, status: true, navlog: true, journey: true }));
+  }
+
+  function openFuelSection() {
+    setActiveTab("briefing");
+    window.setTimeout(() => {
+      document.getElementById("briefing-fuel-section")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+  }
 
   async function importSimBrief() {
     const user = simbriefInput.trim();
@@ -1224,11 +1131,34 @@ export default function App() {
     touchStartX.current = null;
   }
 
-  if (!isAuthenticated) {
-    return <PreReleaseLogin onAuthenticated={() => setIsAuthenticated(true)} />;
-  }
-
   const currentNav = navigationItems.find((item) => item.id === activeTab) || navigationItems[0];
+
+  if (!authenticated) {
+    return (
+      <div className="flex min-h-[100dvh] w-full items-center justify-center bg-white px-5 text-[#25282C]">
+        <div className="w-full max-w-[430px]">
+          <div className="mb-8 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-[#0B1E48] text-[22px] font-bold text-white">vB</div>
+            <h1 className="text-[28px] font-semibold tracking-tight">vBriefing</h1>
+            <p className="mt-2 text-[13px] text-gray-500">Pre-release access</p>
+          </div>
+          <form onSubmit={handlePreReleaseLogin} className="rounded-xl border border-[#D5D5D5] bg-[#F4F4F4] p-5 shadow-sm">
+            <label className="block">
+              <span className="mb-2 block text-[12px] font-semibold text-gray-600">Account name</span>
+              <input value={loginUsername} onChange={(event) => { setLoginUsername(event.target.value); setLoginError(""); }} autoComplete="username" autoCapitalize="none" className="h-[46px] w-full rounded-md border border-gray-300 bg-white px-3 text-[14px] outline-none focus:border-[#526C9B]" placeholder="Account name" autoFocus />
+            </label>
+            <label className="mt-4 block">
+              <span className="mb-2 block text-[12px] font-semibold text-gray-600">Password</span>
+              <input type="password" value={loginPassword} onChange={(event) => { setLoginPassword(event.target.value); setLoginError(""); }} autoComplete="current-password" className="h-[46px] w-full rounded-md border border-gray-300 bg-white px-3 text-[14px] outline-none focus:border-[#526C9B]" placeholder="Password" />
+            </label>
+            {loginError && <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-[12px] font-medium text-red-700">{loginError}</div>}
+            <button type="submit" className="mt-5 h-[48px] w-full rounded-md bg-[#0B1E48] text-[14px] font-semibold text-white transition hover:bg-[#071330]">Enter vBriefing</button>
+          </form>
+          <p className="mt-5 text-center text-[11px] text-gray-400">Closed pre-release · Authorized users only</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div data-night={nightMode ? "true" : "false"} className={`flex h-[100dvh] min-h-0 w-full flex-col overflow-hidden bg-[#E5E7EB] text-[#25282C] ${nightMode ? "night-mode" : ""}`}>
@@ -1323,13 +1253,37 @@ export default function App() {
         </div>
       )}
 
+      {showOFPModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4" onClick={() => setShowOFPModal(false)}>
+          <div className={`flex max-h-[92dvh] w-full max-w-[1050px] flex-col overflow-hidden rounded-xl shadow-2xl ${nightMode ? "bg-[#20242A] text-white" : "bg-white text-gray-900"}`} onClick={(event) => event.stopPropagation()}>
+            <div className={`flex shrink-0 items-center justify-between border-b px-5 py-4 ${nightMode ? "border-[#3A414A]" : "border-gray-200"}`}>
+              <div><div className="text-[18px] font-semibold">OFP / Flight Release</div><div className={`mt-1 text-[11px] ${nightMode ? "text-gray-400" : "text-gray-500"}`}>{effectiveFlight} · {importedOrigin} → {importedDestination} · {effectiveAircraft}</div></div>
+              <button onClick={() => setShowOFPModal(false)} className="rounded-md p-2 hover:bg-black/10"><X size={20} /></button>
+            </div>
+            <div className={`min-h-0 overflow-y-auto p-5 ${nightMode ? "bg-[#191D22]" : "bg-[#E5E7EB]"}`}>
+              <div className={`overflow-hidden rounded-lg border ${nightMode ? "border-[#3A414A] bg-[#20242A]" : "border-[#D0D0D0] bg-white"}`}>
+                <div className="grid grid-cols-2 gap-4 border-b border-gray-200 px-4 py-4 sm:grid-cols-4">
+                  <InfoRow label="Flight" value={effectiveFlight} /><InfoRow label="Aircraft" value={effectiveAircraft} /><InfoRow label="Departure" value={importedOrigin} /><InfoRow label="Arrival" value={importedDestination} />
+                </div>
+                <div className="grid grid-cols-2 gap-4 border-b border-gray-200 px-4 py-4 sm:grid-cols-4">
+                  <InfoRow label="STD" value={formatTime(flight.scheduledOut)} /><InfoRow label="STA" value={formatTime(flight.scheduledIn)} /><InfoRow label="Off-block" value={formatTime(flight.estimatedOut)} /><InfoRow label="On-block" value={formatTime(flight.estimatedIn)} />
+                </div>
+                <div className="border-b border-gray-200 px-4 py-4"><div className="mb-2 text-[12px] font-semibold text-gray-500">ROUTE</div><div className="font-mono text-[12px] leading-6">{effectiveRoute || "AS FILED"}</div></div>
+                <div className="border-b border-gray-200 px-4 py-4"><div className="mb-2 text-[12px] font-semibold text-gray-500">ALTERNATES</div><div className="flex flex-wrap gap-2 text-[12px] font-semibold">{alternates.length ? alternates.map((apt, index) => <span key={`${airportCode(apt)}-${index}`} className="rounded bg-gray-100 px-2 py-1">{airportCode(apt)}</span>) : <span>-</span>}</div></div>
+                <div className="px-4 py-4"><div className="mb-2 text-[12px] font-semibold text-gray-500">NAVIGATION LOG</div><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-[11px]"><thead><tr className="border-b border-gray-200 text-gray-500"><th className="px-2 py-2">#</th><th className="px-2 py-2">FIX</th><th className="px-2 py-2">ALT</th><th className="px-2 py-2">IAS</th><th className="px-2 py-2">WIND</th><th className="px-2 py-2">OAT</th><th className="px-2 py-2">DIST</th><th className="px-2 py-2">ETE</th></tr></thead><tbody>{navFixes.map((fix, index) => <tr key={`${getIdent(fix, index)}-ofp`} className="border-b border-gray-100"><td className="px-2 py-2">{index + 1}</td><td className="px-2 py-2 font-semibold">{getIdent(fix, `FIX${index + 1}`)}</td><td className="px-2 py-2">{fixAltitude(fix)}</td><td className="px-2 py-2">{firstValue(fix.ind_airspeed, fix.ias, "-")}</td><td className="px-2 py-2">{fixWind(fix)}</td><td className="px-2 py-2">{fixTemperature(fix)}</td><td className="px-2 py-2">{firstValue(fix.distance, fix.distance_nm, "-")}</td><td className="px-2 py-2">{formatNavTime(firstValue(fix.time_leg, fix.leg_time, fix.ete))}</td></tr>)}</tbody></table></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="min-h-0 flex-1 overflow-hidden bg-[#E5E7EB]">
         {activeTab === "dashboard" && (
           <div className="relative h-full w-full" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
             <div className={`${dashboardPage === 0 ? "block" : "hidden"} h-full overflow-y-auto p-3`}>
               <div className="grid min-h-full grid-cols-1 gap-4 lg:grid-cols-3">
                 <div className="flex flex-col gap-4">
-                  <FlightInfoCard flight={flight} origin={importedOrigin} destination={importedDestination} effectiveFlight={effectiveFlight} aircraft={effectiveAircraft} />
+                  <FlightInfoCard flight={flight} origin={importedOrigin} destination={importedDestination} effectiveFlight={effectiveFlight} aircraft={effectiveAircraft} onAcceptFlight={acceptFlight} />
                   <ChecklistCard checklist={checklist} onToggle={toggleChecklist} fuelOrdered={fuelOrdered} navlogLoaded={navFixes.length > 0} />
                 </div>
                 <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3">
@@ -1351,8 +1305,8 @@ export default function App() {
               <div className="grid min-h-full grid-cols-1 gap-4 lg:grid-cols-3">
                 <DashboardNotamCard flight={flight} airports={airportsForWeather} selected={weatherAirport} onChange={setWeatherAirport} live={weatherLive} loading={weatherLoading} onOpenCharts={() => setWeatherChartsOpen(true)} />
                 <div className="flex flex-col gap-4">
-                  <FuelSummaryCard flight={flight} fuelOrdered={fuelOrdered} />
-                  <DocumentsCard />
+                  <FuelSummaryCard flight={flight} fuelOrdered={fuelOrdered} onOpenFuel={openFuelSection} />
+                  <DocumentsCard onOpenOFP={() => setShowOFPModal(true)} />
                 </div>
                 <ContactCard pilotName={pilotName} dispatcherName={dispatcherName} />
               </div>
@@ -1820,8 +1774,8 @@ function HeaderCell({ children, className = "" }) {
   return <div className={`flex h-full min-w-0 items-center border-r border-[#C4C6C8] px-3 ${className}`}><span className="max-w-[28vw] truncate">{children}</span></div>;
 }
 
-function FlightInfoCard({ flight, origin, destination, effectiveFlight, aircraft }) {
-  return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><div className="grid grid-cols-3 items-center"><span className="text-[13px] text-gray-500">{aircraft}</span><span className="text-center text-[20px] font-bold">{effectiveFlight}</span><span className="text-right text-[13px] text-gray-500">{flight.registration || "-"}</span></div><div className="mt-1 text-center"><span className="rounded-full bg-[#69C92D] px-4 py-1 text-[12px] font-bold text-[#17500D]">On time</span></div><div className="mt-1 text-center text-[13px]">({flight.blockTime || flight.tripTime})</div><div className="my-1 flex items-center justify-center gap-5"><span className="text-[30px] font-bold">{origin}</span><span className="text-[25px] text-gray-500">→</span><span className="text-[30px] font-bold">{destination}</span></div><div className="grid grid-cols-2 border-b border-gray-300 pb-2 text-center"><div className="border-r border-gray-300"><div className="text-[12px] text-gray-500">RWY {flight.origin?.runway || "—"}</div><div className="mt-1 text-[12px]">STD {formatTime(flight.scheduledOut)}</div></div><div><div className="text-[12px] text-gray-500">RWY {flight.destination?.runway || "—"}</div><div className="mt-1 text-[12px]">STA {formatTime(flight.scheduledIn)}</div></div></div><div className="grid grid-cols-2 py-2"><div className="border-r border-gray-300 px-2"><TimeRow label="STD" value={formatTime(flight.scheduledOut)} /><TimeRow label="ETD" value={formatTime(flight.estimatedOut)} /><TimeRow label="Off-block" value={formatTime(flight.estimatedOut)} /></div><div className="px-2"><TimeRow label="STA" value={formatTime(flight.scheduledIn)} /><TimeRow label="ETA" value={formatTime(flight.estimatedIn)} /><TimeRow label="On-block" value={formatTime(flight.estimatedIn)} /></div></div><div className="pb-1 text-center text-[12px] text-gray-500">{flight.estimatedOff ? `Takeoff ${formatTime(flight.estimatedOff)}` : "- CTOT"}</div><button className="mt-2 h-[51px] w-full rounded-md bg-[#0B1E48] text-[16px] font-semibold text-white">Accept Flight</button></section>;
+function FlightInfoCard({ flight, origin, destination, effectiveFlight, aircraft, onAcceptFlight }) {
+  return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><div className="grid grid-cols-3 items-center"><span className="text-[13px] text-gray-500">{aircraft}</span><span className="text-center text-[20px] font-bold">{effectiveFlight}</span><span className="text-right text-[13px] text-gray-500">{flight.registration || "-"}</span></div><div className="mt-1 text-center"><span className="rounded-full bg-[#69C92D] px-4 py-1 text-[12px] font-bold text-[#17500D]">On time</span></div><div className="mt-1 text-center text-[13px]">({flight.blockTime || flight.tripTime})</div><div className="my-1 flex items-center justify-center gap-5"><span className="text-[30px] font-bold">{origin}</span><span className="text-[25px] text-gray-500">→</span><span className="text-[30px] font-bold">{destination}</span></div><div className="grid grid-cols-2 border-b border-gray-300 pb-2 text-center"><div className="border-r border-gray-300"><div className="text-[12px] text-gray-500">RWY {flight.origin?.runway || "—"}</div><div className="mt-1 text-[12px]">STD {formatTime(flight.scheduledOut)}</div></div><div><div className="text-[12px] text-gray-500">RWY {flight.destination?.runway || "—"}</div><div className="mt-1 text-[12px]">STA {formatTime(flight.scheduledIn)}</div></div></div><div className="grid grid-cols-2 py-2"><div className="border-r border-gray-300 px-2"><TimeRow label="STD" value={formatTime(flight.scheduledOut)} /><TimeRow label="ETD" value={formatTime(flight.estimatedOut)} /><TimeRow label="Off-block" value={formatTime(flight.estimatedOut)} /></div><div className="px-2"><TimeRow label="STA" value={formatTime(flight.scheduledIn)} /><TimeRow label="ETA" value={formatTime(flight.estimatedIn)} /><TimeRow label="On-block" value={formatTime(flight.estimatedIn)} /></div></div><div className="pb-1 text-center text-[12px] text-gray-500">{flight.estimatedOff ? `Takeoff ${formatTime(flight.estimatedOff)}` : "- CTOT"}</div><button onClick={onAcceptFlight} className="mt-2 h-[51px] w-full rounded-md bg-[#0B1E48] text-[16px] font-semibold text-white">Accept Flight</button></section>;
 }
 
 function ChecklistCard({ checklist, onToggle, fuelOrdered, navlogLoaded }) {
@@ -2156,9 +2110,9 @@ function WeatherPanel({ airport, importedMetar, importedTaf, live, loading, char
   return <div className="mt-3 overflow-hidden rounded-md bg-white"><div className="border-b border-gray-200 px-3 py-3"><div className="text-[16px] font-bold">{airport?.name || "UNKNOWN AIRPORT"}</div><div className="text-[12px] text-gray-500">{code}</div></div><div className="space-y-2 px-3 py-3"><WeatherRow label="Ceiling:" value="-" /><WeatherRow label="Visibility:" value={weatherVisibility(metar)} /><WeatherRow label="Wind:" value={weatherWind(metar)} /><WeatherRow label="Temperature:" value={weatherTemp(metar)} /></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 flex items-center justify-between text-[12px] text-gray-500"><span>METAR</span><span>{loading ? "updating..." : "current / OFP fallback"}</span></div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{metar}</pre></div><div className="border-t border-gray-200 px-3 py-3"><div className="mb-1 text-[12px] text-gray-500">TAF</div><pre className="whitespace-pre-wrap font-mono text-[11px] leading-[1.5]">{taf}</pre></div><button disabled={!charts.length || !onOpenCharts} onClick={onOpenCharts} className="m-3 h-[45px] w-[calc(100%-24px)] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50">{charts.length ? "Significant Weather Charts" : "SIGWX not included in OFP"}</button></div>;
 }
 
-function FuelSummaryCard({ flight, fuelOrdered }) { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Fuel</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><div className="flex items-center justify-between bg-[#F5F5F5] px-3 py-3"><span className="text-[15px] text-gray-600">Planned Fuel (OFP):</span><strong className="text-[20px]">{flight.rampFuel || flight.takeoffFuel || "-"} kg</strong></div><div className="space-y-1 px-3 py-3"><FuelRow label="Trip Fuel:" value={`${flight.tripFuel || "-"} kg`} /><FuelRow label="Alternate:" value={`${flight.alternateFuel || "-"} kg`} /><FuelRow label="Reserve:" value={`${flight.reserveFuel || "-"} kg`} /><FuelRow label="Taxi:" value={`${flight.taxiFuel || "-"} kg`} /><FuelRow label="Landing:" value={`${flight.landingFuel || "-"} kg`} /></div></div><div className={`mt-3 rounded-md px-3 py-3 text-[13px] font-semibold ${fuelOrdered ? "bg-[#E6F6DA] text-[#17500D]" : "bg-white text-gray-600"}`}>{fuelOrdered ? "Fuel order: ORDERED" : "Fuel order: NOT ORDERED"}</div><button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open Fuel</button></section>; }
+function FuelSummaryCard({ flight, fuelOrdered, onOpenFuel }) { return <section id="briefing-fuel-section" className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Fuel</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><div className="flex items-center justify-between bg-[#F5F5F5] px-3 py-3"><span className="text-[15px] text-gray-600">Planned Fuel (OFP):</span><strong className="text-[20px]">{flight.rampFuel || flight.takeoffFuel || "-"} kg</strong></div><div className="space-y-1 px-3 py-3"><FuelRow label="Trip Fuel:" value={`${flight.tripFuel || "-"} kg`} /><FuelRow label="Alternate:" value={`${flight.alternateFuel || "-"} kg`} /><FuelRow label="Reserve:" value={`${flight.reserveFuel || "-"} kg`} /><FuelRow label="Taxi:" value={`${flight.taxiFuel || "-"} kg`} /><FuelRow label="Landing:" value={`${flight.landingFuel || "-"} kg`} /></div></div><div className={`mt-3 rounded-md px-3 py-3 text-[13px] font-semibold ${fuelOrdered ? "bg-[#E6F6DA] text-[#17500D]" : "bg-white text-gray-600"}`}>{fuelOrdered ? "Fuel order: ORDERED" : "Fuel order: NOT ORDERED"}</div><button onClick={onOpenFuel} className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open Fuel</button></section>; }
 
-function DocumentsCard() { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Additional Documents</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><DocumentRow title="Crew / Flight Documents" date="Imported from current OFP" /><DocumentRow title="MEL Restrictions" date="Operational documents" /><DocumentRow title="OFP / Flight Release" date="Current SimBrief release" last /></div><button className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">View All Documents</button></section>; }
+function DocumentsCard({ onOpenOFP }) { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Additional Documents</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><button onClick={onOpenOFP} className="block w-full px-3 py-3 text-left hover:bg-gray-50"><div className="text-[14px] font-semibold">OFP / Flight Release</div><div className="mt-1 text-[11px] text-gray-500">Current SimBrief release · click to open</div></button></div><button onClick={onOpenOFP} className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open OFP</button></section>; }
 
 function ContactCard({ pilotName, dispatcherName }) { return <section className="flex h-full flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Contact Information</h2><div className="mt-3 flex flex-1 flex-col overflow-hidden rounded-md bg-white"><div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">CREW</div><div className="px-3 py-3"><div className="text-[13px] text-gray-600">Pilot in Command / Captain</div><div className="mt-1 text-[14px] font-semibold">{pilotName}</div></div><div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">DISPATCH</div><div className="flex items-center justify-between px-3 py-3"><div><div className="text-[14px] font-semibold">{dispatcherName}</div><div className="text-[12px] text-gray-600">Flight Dispatcher</div></div><div className="flex gap-2"><button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white"><Phone size={18} /></button><button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white"><MessageSquare size={18} /></button></div></div><div className="border-t border-gray-200 px-3 py-4 text-[13px] text-gray-600">Crew and dispatch contacts for the current flight.</div></div></section>; }
 
