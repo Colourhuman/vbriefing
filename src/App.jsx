@@ -820,8 +820,7 @@ const PRE_RELEASE_AUTH_KEY = "vbriefing-prerelease-authenticated";
 // frontend bundle and can be inspected by a determined user. For a truly private beta,
 // move authentication to the Render/backend layer later.
 const PRE_RELEASE_ACCOUNTS = [
-  { username: "Milo", password: "Milo2401" },
-  { username: "Elmo", password: "Elmo1255" },
+  { username: "pilot", password: "CHANGE_THIS_PASSWORD" },
 ];
 
 function safeSessionGet(key) {
