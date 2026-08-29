@@ -474,6 +474,42 @@ function normalizeVerticalProfileCharts(ofp) {
   return candidates.sort((a, b) => b.score - a.score)[0] ? [candidates.sort((a, b) => b.score - a.score)[0]] : [];
 }
 
+
+function normalizeSimBriefPDF(ofp) {
+  const downloads = ofp?.fms_downloads || ofp?.fmsDownloads || ofp?.downloads || {};
+  const directory = String(firstValue(
+    downloads?.directory,
+    ofp?.directory,
+    "https://www.simbrief.com/ofp/flightplans/"
+  ) || "").replace(/\/$/, "");
+
+  const makeUrl = (value, base = directory) => {
+    if (!value) return "";
+    let url = String(value).trim().replace(/&amp;/g, "&");
+    if (!url) return "";
+    if (/^http:\/\//i.test(url)) url = `https://${url.slice(7)}`;
+    if (/^https?:\/\//i.test(url)) return url;
+    return `${base}/${url.replace(/^\/+/, "")}`;
+  };
+
+  // SimBrief exposes the PDF through fms_downloads.pdf.link.
+  const direct = firstValue(
+    downloads?.pdf?.link,
+    downloads?.pdf?.url,
+    downloads?.pdf,
+    ofp?.pdf?.link,
+    ofp?.pdf?.url,
+    typeof ofp?.pdf === "string" ? ofp.pdf : ""
+  );
+  if (direct) return makeUrl(direct, downloads?.pdf?.directory || directory);
+
+  // Some responses expose the PDF filename directly in the root object.
+  const rootPdf = firstValue(ofp?.pdf, ofp?.OFP?.pdf, ofp?.files?.pdf);
+  if (typeof rootPdf === "string" && rootPdf) return makeUrl(rootPdf, directory);
+
+  return "";
+}
+
 function rootOrNested(ofp, nested, keys) {
   const values = [];
   keys.forEach((key) => values.push(nested?.[key], ofp?.[key]));
@@ -554,6 +590,7 @@ function normalizeSimBriefOFP(ofp) {
     notams: normalizeNotams(ofp),
     sigwxCharts: normalizeSigwxCharts(ofp),
     verticalProfileCharts: normalizeVerticalProfileCharts(ofp),
+    ofpPdfUrl: normalizeSimBriefPDF(ofp),
     origin,
     destination,
     alternate: alternates[0] || null,
@@ -1306,7 +1343,7 @@ export default function App() {
                 <DashboardNotamCard flight={flight} airports={airportsForWeather} selected={weatherAirport} onChange={setWeatherAirport} live={weatherLive} loading={weatherLoading} onOpenCharts={() => setWeatherChartsOpen(true)} />
                 <div className="flex flex-col gap-4">
                   <FuelSummaryCard flight={flight} fuelOrdered={fuelOrdered} onOpenFuel={openFuelSection} />
-                  <DocumentsCard onOpenOFP={() => setShowOFPModal(true)} />
+                  <DocumentsCard onOpenOFP={() => { if (flight.ofpPdfUrl) window.open(flight.ofpPdfUrl, "_blank", "noopener,noreferrer"); }} disabled={!flight.ofpPdfUrl} />
                 </div>
                 <ContactCard pilotName={pilotName} dispatcherName={dispatcherName} />
               </div>
@@ -2112,7 +2149,7 @@ function WeatherPanel({ airport, importedMetar, importedTaf, live, loading, char
 
 function FuelSummaryCard({ flight, fuelOrdered, onOpenFuel }) { return <section id="briefing-fuel-section" className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Fuel</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><div className="flex items-center justify-between bg-[#F5F5F5] px-3 py-3"><span className="text-[15px] text-gray-600">Planned Fuel (OFP):</span><strong className="text-[20px]">{flight.rampFuel || flight.takeoffFuel || "-"} kg</strong></div><div className="space-y-1 px-3 py-3"><FuelRow label="Trip Fuel:" value={`${flight.tripFuel || "-"} kg`} /><FuelRow label="Alternate:" value={`${flight.alternateFuel || "-"} kg`} /><FuelRow label="Reserve:" value={`${flight.reserveFuel || "-"} kg`} /><FuelRow label="Taxi:" value={`${flight.taxiFuel || "-"} kg`} /><FuelRow label="Landing:" value={`${flight.landingFuel || "-"} kg`} /></div></div><div className={`mt-3 rounded-md px-3 py-3 text-[13px] font-semibold ${fuelOrdered ? "bg-[#E6F6DA] text-[#17500D]" : "bg-white text-gray-600"}`}>{fuelOrdered ? "Fuel order: ORDERED" : "Fuel order: NOT ORDERED"}</div><button onClick={onOpenFuel} className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open Fuel</button></section>; }
 
-function DocumentsCard({ onOpenOFP }) { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Additional Documents</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><button onClick={onOpenOFP} className="block w-full px-3 py-3 text-left hover:bg-gray-50"><div className="text-[14px] font-semibold">OFP / Flight Release</div><div className="mt-1 text-[11px] text-gray-500">Current SimBrief release · click to open</div></button></div><button onClick={onOpenOFP} className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open OFP</button></section>; }
+function DocumentsCard({ onOpenOFP, disabled = false }) { return <section className="rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Additional Documents</h2><div className="mt-3 overflow-hidden rounded-md bg-white"><button onClick={onOpenOFP} disabled={disabled} className="block w-full px-3 py-3 text-left hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"><div className="text-[14px] font-semibold">OFP / Flight Release</div><div className="mt-1 text-[11px] text-gray-500">Original SimBrief OFP PDF · click to open</div></button></div><button onClick={onOpenOFP} disabled={disabled} className="mt-3 h-[49px] w-full rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50">Open OFP</button></section>; }
 
 function ContactCard({ pilotName, dispatcherName }) { return <section className="flex h-full flex-col rounded-lg border border-[#D0D0D0] bg-[#F1F1F1] p-3"><h2 className="text-center text-[19px] font-semibold">Contact Information</h2><div className="mt-3 flex flex-1 flex-col overflow-hidden rounded-md bg-white"><div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">CREW</div><div className="px-3 py-3"><div className="text-[13px] text-gray-600">Pilot in Command / Captain</div><div className="mt-1 text-[14px] font-semibold">{pilotName}</div></div><div className="bg-[#F5F5F5] px-3 py-3 text-[14px] font-semibold text-gray-500">DISPATCH</div><div className="flex items-center justify-between px-3 py-3"><div><div className="text-[14px] font-semibold">{dispatcherName}</div><div className="text-[12px] text-gray-600">Flight Dispatcher</div></div><div className="flex gap-2"><button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white"><Phone size={18} /></button><button className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#526C9B] text-white"><MessageSquare size={18} /></button></div></div><div className="border-t border-gray-200 px-3 py-4 text-[13px] text-gray-600">Crew and dispatch contacts for the current flight.</div></div></section>; }
 
