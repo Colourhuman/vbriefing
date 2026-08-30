@@ -40,6 +40,10 @@ const PRE_RELEASE_ACCOUNTS = [
   { username: "Leon", password: "Goat" },
 ];
 
+// Publicly available simplified FIR/UIR GeoJSON used only for visual map boundaries.
+// We render UIRs only; no labels are drawn. The dataset notes that its world file is
+// focused on Europe and may not reflect the latest operational airspace changes.
+
 function safeStorageGet(key) {
   try {
     return localStorage.getItem(key) || "";
@@ -798,7 +802,7 @@ const NIGHT_MODE_CSS = `
 [data-night="true"] [class*="bg-[#F8F8F8]"],
 [data-night="true"] [class*="bg-[#F5F5F5]"],
 [data-night="true"] [class*="bg-[#F0F1F2]"] { background:#2b3036 !important; }
-[data-night="true"] img[src*="tile.opentopomap.org"] { filter: grayscale(82%) saturate(35%) contrast(92%) brightness(46%) !important; }
+[data-night="true"] img[src*="tile.openstreetmap.org"] { filter: grayscale(82%) saturate(35%) contrast(92%) brightness(46%) !important; }
 [data-night="true"] .lido-grid-lines line { stroke:#AEB5BC !important; opacity:.30 !important; }
 [data-night="true"] .lido-uir-boundary { stroke:#6FC96A !important; opacity:.72 !important; }
 [data-night="true"] [class*="bg-[#F4F3ED]"],
@@ -850,6 +854,27 @@ if (typeof document !== "undefined") {
   }
 }
 
+const MPILOT_URL_STORAGE_KEY = "vbriefing-mpilot-url";
+const DEFAULT_MPILOT_URL = "https://mpilot.onrender.com";
+
+function buildMsfsPlanUrl(flight) {
+  const params = new URLSearchParams();
+  params.set("origin", airportCode(flight.origin));
+  params.set("destination", airportCode(flight.destination));
+  if (flight.route) params.set("route", flight.route);
+  if (flight.cruiseAltitude) params.set("altitude", String(flight.cruiseAltitude));
+  if (flight.flightNumber || flight.callsign) params.set("flight", firstValue(flight.flightNumber, flight.callsign));
+  return params.toString();
+}
+
+function openMpPilotWithFlight(flight) {
+  let url = DEFAULT_MPILOT_URL;
+  try { url = localStorage.getItem(MPILOT_URL_STORAGE_KEY) || DEFAULT_MPILOT_URL; } catch {}
+  const query = buildMsfsPlanUrl(flight);
+  const separator = url.includes("?") ? "&" : "?";
+  window.open(`${url}${query ? separator + query : ""}`, "_blank", "noopener,noreferrer");
+}
+
 const DISPATCHER_NAMES = [
   "Alex Morgan",
   "Daniel Weber",
@@ -897,9 +922,10 @@ export default function App() {
   const [showRouteLabels, setShowRouteLabels] = useState(true);
   const [nightMode, setNightMode] = useState(false);
   const [weatherChartsOpen, setWeatherChartsOpen] = useState(false);
-  const [loadedSigwxCharts, setLoadedSigwxCharts] = useState([]);
+  const [validSigwxCharts, setValidSigwxCharts] = useState([]);
+  const [showMPilotUrlDialog, setShowMPilotUrlDialog] = useState(false);
+  const [mpilotUrlInput, setMpilotUrlInput] = useState(() => safeStorageGet(MPILOT_URL_STORAGE_KEY) || DEFAULT_MPILOT_URL);
   const [showOFPModal, setShowOFPModal] = useState(false);
-  const [mPilotUrl, setMPilotUrl] = useState(() => safeStorageGet("virtual-lido-mpilot-url"));
   const [dispatcherName] = useState(() => DISPATCHER_NAMES[Math.floor(Math.random() * DISPATCHER_NAMES.length)]);
   const touchStartX = useRef(null);
 
@@ -919,27 +945,25 @@ export default function App() {
     let cancelled = false;
     const charts = Array.isArray(flight.sigwxCharts) ? flight.sigwxCharts : [];
     if (!charts.length) {
-      setLoadedSigwxCharts([]);
+      setValidSigwxCharts([]);
       return undefined;
     }
-    Promise.all(charts.map((chart) => new Promise((resolve) => {
+    let remaining = charts.length;
+    const valid = [];
+    charts.forEach((chart, index) => {
       const image = new Image();
-      let settled = false;
-      const finish = (ok) => {
-        if (settled) return;
-        settled = true;
-        resolve(ok ? chart : null);
+      image.onload = () => {
+        if (cancelled) return;
+        valid.push({ ...chart, _index: index });
+        remaining -= 1;
+        if (remaining === 0) setValidSigwxCharts(valid);
       };
-      image.onload = () => finish(true);
-      image.onerror = () => finish(false);
+      image.onerror = () => {
+        if (cancelled) return;
+        remaining -= 1;
+        if (remaining === 0) setValidSigwxCharts(valid);
+      };
       image.src = chart.url;
-      window.setTimeout(() => finish(false), 7000);
-    }))).then((results) => {
-      if (cancelled) return;
-      const usable = results.filter(Boolean);
-      // Keep the exact assets that the browser can actually load. This prevents
-      // broken/legacy SIGWX references from appearing as extra charts.
-      setLoadedSigwxCharts(usable);
     });
     return () => { cancelled = true; };
   }, [flight.sigwxCharts]);
@@ -1111,40 +1135,6 @@ export default function App() {
     } finally {
       setSimbriefLoading(false);
     }
-  }
-
-  function openMPilot() {
-    let target = mPilotUrl.trim();
-    if (!target) {
-      target = window.prompt("Enter your mPilot URL", "https://");
-      if (!target) return;
-      target = target.trim();
-      if (!/^https?:\/\//i.test(target)) target = `https://${target}`;
-      setMPilotUrl(target);
-      safeStorageSet("virtual-lido-mpilot-url", target);
-    }
-
-    if (!/^https?:\/\//i.test(target)) target = `https://${target}`;
-    const handoff = {
-      source: "vBriefing",
-      version: 1,
-      importedAt: new Date().toISOString(),
-      flight: {
-        flightNumber: flight.flightNumber,
-        callsign: flight.callsign,
-        aircraftIcao: flight.aircraftIcao,
-        registration: flight.registration,
-        origin: flight.origin,
-        destination: flight.destination,
-        alternates: flight.alternates || [],
-        route: flight.route,
-        cruiseAltitude: flight.cruiseAltitude,
-        navlog: flight.navlog || [],
-      },
-    };
-    const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(handoff))));
-    const separator = target.includes("?") ? "&" : "?";
-    window.open(`${target}${separator}vbriefing=${encodeURIComponent(encoded)}`, "_blank", "noopener,noreferrer");
   }
 
   async function refreshLiveWeather(plan = flight) {
@@ -1323,7 +1313,7 @@ export default function App() {
               <button onClick={() => setWeatherChartsOpen(false)} className="rounded-md p-2 hover:bg-black/10"><X size={20} /></button>
             </div>
             <div className={`flex shrink-0 gap-2 border-b px-3 py-2 ${nightMode ? "border-[#3A414A] bg-[#191D22]" : "border-gray-200 bg-gray-50"}`}>
-              <button onClick={() => setWeatherChartsOpen(true)} className="rounded-md bg-[#0B1E48] px-3 py-2 text-[12px] font-semibold text-white">SIGWX ({loadedSigwxCharts.length})</button>
+              <button onClick={() => setWeatherChartsOpen(true)} className="rounded-md bg-[#0B1E48] px-3 py-2 text-[12px] font-semibold text-white">SIGWX ({validSigwxCharts.length})</button>
               <button
                 className={`rounded-md border px-3 py-2 text-[12px] font-semibold ${nightMode ? "border-[#4A515B] bg-[#2A3038] text-gray-100" : "border-gray-300 bg-white text-gray-700"}`}
                 onClick={() => setWeatherChartsOpen("vertical")}
@@ -1338,13 +1328,34 @@ export default function App() {
                   </div>
                 )) : <div className="p-10 text-center text-[13px] text-gray-500">This OFP does not contain a vertical profile chart. SimBrief Flight Maps must be enabled/detailed when generating the OFP.</div>
               ) : (
-                loadedSigwxCharts.length ? loadedSigwxCharts.map((chart, index) => (
+                validSigwxCharts.length ? validSigwxCharts.map((chart, index) => (
                   <div key={`${chart.url}-${index}`} className="mb-3 overflow-hidden rounded-lg bg-white shadow-sm last:mb-0">
                     <div className="border-b border-gray-200 px-3 py-2 text-[12px] font-semibold">{chart.name}</div>
                     <img src={chart.url} alt={chart.name} className="block h-auto w-full" loading="eager" />
                   </div>
                 )) : <div className="p-10 text-center text-[13px] text-gray-500">This OFP does not contain a SIGWX chart.</div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMPilotUrlDialog && (
+        <div className="fixed inset-0 z-[105] flex items-center justify-center bg-black/60 p-4" onClick={() => setShowMPilotUrlDialog(false)}>
+          <div className={`w-full max-w-[520px] rounded-xl border p-5 shadow-2xl ${nightMode ? "border-[#3A414A] bg-[#20242A] text-white" : "border-gray-200 bg-white text-gray-900"}`} onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <div className="text-[17px] font-semibold">Open flight in mPilot</div>
+                <div className={`mt-1 text-[11px] ${nightMode ? "text-gray-400" : "text-gray-500"}`}>The SimBrief flight is passed as URL parameters.</div>
+              </div>
+              <button onClick={() => setShowMPilotUrlDialog(false)} className="rounded-md p-2 hover:bg-black/10"><X size={19} /></button>
+            </div>
+            <label className="block text-[12px] font-semibold text-gray-600">mPilot URL</label>
+            <input value={mpilotUrlInput} onChange={(event) => setMpilotUrlInput(event.target.value)} className="mt-2 h-[44px] w-full rounded-md border border-gray-300 bg-white px-3 text-[13px] outline-none focus:border-[#526C9B]" placeholder="https://mpilot.onrender.com" />
+            <div className="mt-3 text-[11px] text-gray-500">Example: origin, destination, route, altitude and flight number will be appended automatically.</div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button onClick={() => setShowMPilotUrlDialog(false)} className="h-[44px] rounded-md border border-gray-300 bg-white font-semibold">Cancel</button>
+              <button onClick={() => { const clean = mpilotUrlInput.trim() || DEFAULT_MPILOT_URL; safeStorageSet(MPILOT_URL_STORAGE_KEY, clean); setShowMPilotUrlDialog(false); openMpPilotWithFlight(flight); }} className="h-[44px] rounded-md bg-[#0B1E48] font-semibold text-white">Open mPilot</button>
             </div>
           </div>
         </div>
@@ -1391,7 +1402,7 @@ export default function App() {
                   </div>
                   <div className="grid grid-cols-2 gap-2 pt-3">
                     <button onClick={() => setActiveTab("map")} className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Go to Map</button>
-                    <button onClick={openMPilot} className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open in mPilot</button>
+                    <button onClick={() => { setMpilotUrlInput(safeStorageGet(MPILOT_URL_STORAGE_KEY) || DEFAULT_MPILOT_URL); setShowMPilotUrlDialog(true); }} className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open in mPilot</button>
                   </div>
                 </section>
                 <DashboardWeatherCard flight={flight} airports={airportsForWeather} selected={weatherAirport} onChange={setWeatherAirport} live={weatherLive} loading={weatherLoading} onRefresh={() => refreshLiveWeather(flight)} onOpenCharts={() => setWeatherChartsOpen(true)} />
@@ -1888,6 +1899,7 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
   const containerRef = useRef(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
+
   useEffect(() => {
     if (!containerRef.current) return undefined;
     const observer = new ResizeObserver((entries) => {
@@ -1968,11 +1980,23 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
   return (
     <div ref={containerRef} className={`relative h-full w-full overflow-hidden bg-[#E8E8E3] ${compact ? "rounded-md" : ""}`}>
       {tiles.map((tile) => (
-        <img key={`${tile.x}-${tile.y}-${tile.z}`} src={tile.url} alt="" className="pointer-events-none absolute z-0 select-none" style={{ left: tile.left, top: tile.top, width: 256, height: 256, opacity: 0.92, filter: "saturate(82%) contrast(92%) brightness(104%)" }} draggable={false} loading="eager" />
+        <img key={`${tile.x}-${tile.y}-${tile.z}`} src={tile.url} alt="" className="pointer-events-none absolute z-0 select-none" style={{ left: tile.left, top: tile.top, width: 256, height: 256, opacity: 0.86, filter: "grayscale(86%) saturate(42%) contrast(91%) brightness(112%) sepia(7%)" }} draggable={false} loading="eager" />
       ))}
 
-      <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/8" />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.035),rgba(235,235,225,.055))]" />
+      <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/25" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.08),rgba(235,235,225,.14))]" />
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+        <div className="absolute -left-[8%] top-[12%] h-[48%] w-[42%] rounded-[48%] bg-[#B98543]/[0.06] blur-[5px]" />
+        <div className="absolute left-[18%] top-[35%] h-[39%] w-[30%] rounded-[48%] bg-[#C4924D]/[0.07] blur-[6px]" />
+        <div className="absolute right-[14%] top-[21%] h-[34%] w-[25%] rounded-[52%] bg-[#A97537]/[0.055] blur-[6px]" />
+        <div className="absolute right-[6%] bottom-[2%] h-[43%] w-[35%] rounded-[52%] bg-[#B9813F]/[0.07] blur-[7px]" />
+        <svg className="absolute inset-0 h-full w-full opacity-[0.16]" viewBox="0 0 1200 800" preserveAspectRatio="none">
+          <path d="M40 240 C180 170 280 200 390 260 S610 330 735 250 S1010 180 1170 250" fill="none" stroke="#A67139" strokeWidth="2" />
+          <path d="M35 275 C175 205 275 235 380 295 S605 365 745 285 S1005 215 1175 285" fill="none" stroke="#A67139" strokeWidth="1.5" />
+          <path d="M80 540 C220 470 315 500 445 575 S700 650 830 555 S1030 470 1180 545" fill="none" stroke="#A67139" strokeWidth="1.6" />
+          <path d="M70 575 C210 505 300 535 435 610 S695 685 840 590 S1035 505 1190 580" fill="none" stroke="#A67139" strokeWidth="1.2" />
+        </svg>
+      </div>
 
       {/* Full-surface chart grid. This is intentionally independent from the geographic bounds so the grid always covers the complete map, including the margins. */}
       <div
@@ -1982,6 +2006,7 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
 
       {view && (
         <svg className="pointer-events-none absolute inset-0 z-[3] h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
+
           {/* Geographic graticule: full map width/height, with coordinate labels at the map edges. */}
           <g className="lido-grid-lines">
             {grid.map((line, index) => (
@@ -2036,7 +2061,8 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
 
       {showLabels && <div className="absolute left-2 top-2 rounded-sm bg-white/88 px-2 py-1 text-[9px] font-semibold text-gray-600 shadow-sm">ENROUTE</div>}
       {onToggleLabels && <button onClick={onToggleLabels} className="absolute right-2 top-2 z-10 rounded-sm bg-white/88 px-2 py-1 text-[9px] font-semibold text-gray-600 shadow-sm">{showLabels ? "Hide" : "Show"}</button>}
-      <div className="absolute bottom-1 right-1 rounded bg-white/82 px-1.5 py-0.5 text-[8px] text-gray-500">© OpenTopoMap · © OpenStreetMap contributors</div>
+      <div className="absolute bottom-2 left-2 z-10 rounded bg-white/80 px-2 py-1 text-[8px] text-gray-600 shadow-sm">TEMPORARY LIDO-STYLE MAP · TOPOGRAPHY PLACEHOLDER</div>
+      <div className="absolute bottom-1 right-1 rounded bg-white/82 px-1.5 py-0.5 text-[8px] text-gray-500">© OpenStreetMap contributors</div>
     </div>
   );
 }
@@ -2104,7 +2130,7 @@ function makeTiles(zoom, bounds, width, height) {
   for (let y = Math.max(0, minY - 2); y <= Math.min(tileCount - 1, maxY + 2); y += 1) {
     for (let x = minX - 2; x <= maxX + 2; x += 1) {
       const wrappedX = ((x % tileCount) + tileCount) % tileCount;
-      tiles.push({ z: zoom, x: wrappedX, y, left: x * 256 - topLeft.x, top: y * 256 - topLeft.y, url: `https://tile.opentopomap.org/${zoom}/${wrappedX}/${y}.png` });
+      tiles.push({ z: zoom, x: wrappedX, y, left: x * 256 - topLeft.x, top: y * 256 - topLeft.y, url: `https://basemaps.cartocdn.com/light_all/${zoom}/${wrappedX}/${y}.png` });
     }
   }
   return tiles;
