@@ -33,6 +33,7 @@ const navigationItems = [
 const SIMBRIEF_STORAGE_KEY = "virtual-lido-simbrief-user";
 const SIMBRIEF_OFP_STORAGE_KEY = "virtual-lido-simbrief-ofp-v3";
 const SIMBRIEF_FUEL_ORDER_KEY = "virtual-lido-fuel-ordered-v3";
+const MSFS_FLIGHT_PLANNER_URL = "https://planner.flightsimulator.com/";
 
 // Closed pre-release access. Replace/remove this gate before public release.
 const PRE_RELEASE_ACCOUNTS = [
@@ -1087,6 +1088,84 @@ export default function App() {
     }
   }
 
+  function buildMSFSPln(plan = flight) {
+    const origin = plan?.origin || {};
+    const destination = plan?.destination || {};
+    const fixes = (plan?.navlog || []).filter((fix) => Number.isFinite(fix.lat) && Number.isFinite(fix.lon));
+
+    const position = (lat, lon, alt = 0) =>
+      `${Number(lat).toFixed(6)},${Number(lon).toFixed(6)},${Number(alt)}`;
+
+    const waypoint = (ident, lat, lon, alt = 0) => `
+      <ATCWaypoint id="${String(ident).replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">
+        <ATCWaypointType>Intersection</ATCWaypointType>
+        <WorldPosition>${position(lat, lon, alt)}</WorldPosition>
+      </ATCWaypoint>`;
+
+    const title = `${airportCode(origin) || "ORIGIN"} to ${airportCode(destination) || "DESTINATION"}`;
+
+    const altitude = Number(
+      String(firstValue(
+        plan.cruiseAltitude,
+        plan.general?.initial_altitude,
+        plan.raw?.general?.initial_altitude,
+        0
+      )).replace(/[^\d.-]/g, "")
+    );
+
+    const cruisingAlt = Number.isFinite(altitude) ? Math.round(altitude) : 0;
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<SimBase.Document Type="AceXML" version="1,0">
+  <Descr>mPilot MSFS Flight Plan</Descr>
+  <FlightPlan.FlightPlan>
+    <Title>${title.replace(/&/g, "&amp;")}</Title>
+    <Descr>Exported from vBriefing mPilot integration</Descr>
+    <FPType>IFR</FPType>
+    <CruisingAlt>${String(cruisingAlt)}</CruisingAlt>
+    <DepartureID>${airportCode(origin)}</DepartureID>
+    <DepartureLLA>${position(origin.lat ?? 0, origin.lon ?? 0, origin.elevation ?? 0)}</DepartureLLA>
+    <DestinationID>${airportCode(destination)}</DestinationID>
+    <DestinationLLA>${position(destination.lat ?? 0, destination.lon ?? 0, destination.elevation ?? 0)}</DestinationLLA>
+    <DepartureName>${String(origin.name || airportCode(origin)).replace(/&/g, "&amp;")}</DepartureName>
+    <DestinationName>${String(destination.name || airportCode(destination)).replace(/&/g, "&amp;")}</DestinationName>
+    <AppVersion>
+      <AppVersionMajor>1</AppVersionMajor>
+      <AppVersionBuild>0</AppVersionBuild>
+    </AppVersion>
+    ${fixes.map((fix) => waypoint(getIdent(fix), fix.lat, fix.lon, Number(fix.altitude_feet || fix.altitude || 0) || 0)).join("\n")}
+  </FlightPlan.FlightPlan>
+</SimBase.Document>`;
+
+    return xml;
+  }
+
+  function sendToMSFSPlanner() {
+    if (!flight?.origin || !flight?.destination) {
+      setSimbriefError("Import first a SimBrief OFP with a departure and destination.");
+      return;
+    }
+
+    // Open the official planner first. The browser cannot silently inject a
+    // cross-origin route into planner.flightsimulator.com, so we provide the
+    // official .PLN file that can be loaded there and open the planner at the
+    // same time.
+    window.open(MSFS_FLIGHT_PLANNER_URL, "_blank", "noopener,noreferrer");
+
+    const xml = buildMSFSPln(flight);
+    const blob = new Blob([xml], { type: "application/xml" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${airportCode(flight.origin) || "ORIGIN"}-${airportCode(flight.destination) || "DESTINATION"}.pln`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+
+    setSimbriefError("");
+  }
+
   async function refreshLiveWeather(plan = flight) {
     const airports = uniqueByCode([
       plan.origin,
@@ -1242,6 +1321,7 @@ export default function App() {
               </label>
               {simbriefError && <div className="rounded-md bg-red-50 p-3 text-[12px] text-red-700">{simbriefError}</div>}
               {simbriefData && <div className="rounded-md bg-[#F3F5F7] p-3 text-[12px] text-gray-600">Imported: <strong>{airportCode(simbriefData.origin)} → {airportCode(simbriefData.destination)}</strong> · {simbriefData.flightNumber || simbriefData.callsign}</div>}
+              {simbriefData && <button onClick={sendToMSFSPlanner} className="flex h-[46px] w-full items-center justify-center gap-2 rounded-md border border-[#526C9B] bg-white font-semibold text-[#334A6D] hover:bg-gray-50"><span>Send to MSFS Flight Planner</span></button>}
               <div className="flex gap-3">
                 <button onClick={clearImportedPlan} disabled={!simbriefData || simbriefLoading} className="h-[46px] rounded-md border border-gray-300 bg-white px-4 font-semibold hover:bg-gray-50 disabled:opacity-50">Clear OFP</button>
                 <button onClick={importSimBrief} disabled={simbriefLoading} className="flex h-[46px] flex-1 items-center justify-center gap-2 rounded-md bg-[#0B1E48] font-semibold text-white hover:bg-[#071330] disabled:opacity-60">
@@ -1257,7 +1337,7 @@ export default function App() {
 
       {weatherChartsOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={() => setWeatherChartsOpen(false)}>
-          <div className={`flex max-h-[92dvh] w-full max-w-[1100px] flex-col overflow-hidden rounded-xl shadow-2xl ${nightMode ? "bg-[#20242A] text-white" : "bg-white text-gray-900"}`} onClick={(event) => event.stopPropagation()}>
+          <div className={`flex h-[92dvh] max-h-[92dvh] w-full max-w-[1100px] flex-col overflow-hidden rounded-xl shadow-2xl ${nightMode ? "bg-[#20242A] text-white" : "bg-white text-gray-900"}`} onClick={(event) => event.stopPropagation()}>
             <div className={`flex shrink-0 items-center justify-between border-b px-4 py-3 ${nightMode ? "border-[#3A414A]" : "border-gray-200"}`}>
               <div><div className="text-[17px] font-semibold">Flight Weather Charts</div><div className={`text-[11px] ${nightMode ? "text-gray-400" : "text-gray-500"}`}>From the current SimBrief OFP</div></div>
               <button onClick={() => setWeatherChartsOpen(false)} className="rounded-md p-2 hover:bg-black/10"><X size={20} /></button>
@@ -1269,19 +1349,19 @@ export default function App() {
                 onClick={() => setWeatherChartsOpen("vertical")}
               >Vertical Profile ({flight.verticalProfileCharts?.length || 0})</button>
             </div>
-            <div className="min-h-0 overflow-y-auto bg-[#E5E7EB] p-3">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#E5E7EB] p-3">
               {weatherChartsOpen === "vertical" ? (
                 flight.verticalProfileCharts?.length ? flight.verticalProfileCharts.map((chart, index) => (
-                  <div key={`${chart.url}-${index}`} className="mb-3 overflow-hidden rounded-lg bg-white shadow-sm last:mb-0">
+                  <div key={`${chart.url}-${index}`} className="mb-3 overflow-visible rounded-lg bg-white shadow-sm last:mb-0">
                     <div className="border-b border-gray-200 px-3 py-2 text-[12px] font-semibold">{chart.name}</div>
-                    <img src={chart.url} alt={chart.name} className="block h-auto w-full" loading="eager" />
+                    <img src={chart.url} alt={chart.name} className="block h-auto w-full min-h-0 object-contain" loading="eager" />
                   </div>
                 )) : <div className="p-10 text-center text-[13px] text-gray-500">This OFP does not contain a vertical profile chart. SimBrief Flight Maps must be enabled/detailed when generating the OFP.</div>
               ) : (
                 flight.sigwxCharts?.length ? flight.sigwxCharts.map((chart, index) => (
-                  <div key={`${chart.url}-${index}`} className="mb-3 overflow-hidden rounded-lg bg-white shadow-sm last:mb-0">
+                  <div key={`${chart.url}-${index}`} className="mb-3 overflow-visible rounded-lg bg-white shadow-sm last:mb-0">
                     <div className="border-b border-gray-200 px-3 py-2 text-[12px] font-semibold">{chart.name}</div>
-                    <img src={chart.url} alt={chart.name} className="block h-auto w-full" loading="eager" />
+                    <img src={chart.url} alt={chart.name} className="block h-auto w-full min-h-0 object-contain" loading="eager" />
                   </div>
                 )) : <div className="p-10 text-center text-[13px] text-gray-500">This OFP does not contain a SIGWX chart.</div>
               )}
