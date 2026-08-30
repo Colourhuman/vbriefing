@@ -33,18 +33,12 @@ const navigationItems = [
 const SIMBRIEF_STORAGE_KEY = "virtual-lido-simbrief-user";
 const SIMBRIEF_OFP_STORAGE_KEY = "virtual-lido-simbrief-ofp-v3";
 const SIMBRIEF_FUEL_ORDER_KEY = "virtual-lido-fuel-ordered-v3";
-const MSFS_FLIGHT_PLANNER_URL = "https://planner.flightsimulator.com/";
 
 // Closed pre-release access. Replace/remove this gate before public release.
 const PRE_RELEASE_ACCOUNTS = [
   { username: "Milo", password: "Milo2401" },
   { username: "Leon", password: "Goat" },
 ];
-
-// Publicly available simplified FIR/UIR GeoJSON used only for visual map boundaries.
-// We render UIRs only; no labels are drawn. The dataset notes that its world file is
-// focused on Europe and may not reflect the latest operational airspace changes.
-const UIR_GEOJSON_URL = "https://raw.githubusercontent.com/jaluebbe/FlightMapEuropeSimple/master/static/flightmap_europe_fir_uir.json";
 
 function safeStorageGet(key) {
   try {
@@ -804,7 +798,7 @@ const NIGHT_MODE_CSS = `
 [data-night="true"] [class*="bg-[#F8F8F8]"],
 [data-night="true"] [class*="bg-[#F5F5F5]"],
 [data-night="true"] [class*="bg-[#F0F1F2]"] { background:#2b3036 !important; }
-[data-night="true"] img[src*="tile.openstreetmap.org"] { filter: grayscale(82%) saturate(35%) contrast(92%) brightness(46%) !important; }
+[data-night="true"] img[src*="tile.opentopomap.org"] { filter: grayscale(82%) saturate(35%) contrast(92%) brightness(46%) !important; }
 [data-night="true"] .lido-grid-lines line { stroke:#AEB5BC !important; opacity:.30 !important; }
 [data-night="true"] .lido-uir-boundary { stroke:#6FC96A !important; opacity:.72 !important; }
 [data-night="true"] [class*="bg-[#F4F3ED]"],
@@ -903,7 +897,9 @@ export default function App() {
   const [showRouteLabels, setShowRouteLabels] = useState(true);
   const [nightMode, setNightMode] = useState(false);
   const [weatherChartsOpen, setWeatherChartsOpen] = useState(false);
+  const [loadedSigwxCharts, setLoadedSigwxCharts] = useState([]);
   const [showOFPModal, setShowOFPModal] = useState(false);
+  const [mPilotUrl, setMPilotUrl] = useState(() => safeStorageGet("virtual-lido-mpilot-url"));
   const [dispatcherName] = useState(() => DISPATCHER_NAMES[Math.floor(Math.random() * DISPATCHER_NAMES.length)]);
   const touchStartX = useRef(null);
 
@@ -918,6 +914,35 @@ export default function App() {
     }
     return base;
   }, [simbriefData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const charts = Array.isArray(flight.sigwxCharts) ? flight.sigwxCharts : [];
+    if (!charts.length) {
+      setLoadedSigwxCharts([]);
+      return undefined;
+    }
+    Promise.all(charts.map((chart) => new Promise((resolve) => {
+      const image = new Image();
+      let settled = false;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        resolve(ok ? chart : null);
+      };
+      image.onload = () => finish(true);
+      image.onerror = () => finish(false);
+      image.src = chart.url;
+      window.setTimeout(() => finish(false), 7000);
+    }))).then((results) => {
+      if (cancelled) return;
+      const usable = results.filter(Boolean);
+      // Keep the exact assets that the browser can actually load. This prevents
+      // broken/legacy SIGWX references from appearing as extra charts.
+      setLoadedSigwxCharts(usable);
+    });
+    return () => { cancelled = true; };
+  }, [flight.sigwxCharts]);
 
   const alternates = useMemo(() => uniqueByCode(flight.alternates || (flight.alternate ? [flight.alternate] : [])), [flight.alternates, flight.alternate]);
   const airportsForWeather = useMemo(
@@ -1088,82 +1113,38 @@ export default function App() {
     }
   }
 
-  function buildMSFSPln(plan = flight) {
-    const origin = plan?.origin || {};
-    const destination = plan?.destination || {};
-    const fixes = (plan?.navlog || []).filter((fix) => Number.isFinite(fix.lat) && Number.isFinite(fix.lon));
-
-    const position = (lat, lon, alt = 0) =>
-      `${Number(lat).toFixed(6)},${Number(lon).toFixed(6)},${Number(alt)}`;
-
-    const waypoint = (ident, lat, lon, alt = 0) => `
-      <ATCWaypoint id="${String(ident).replace(/&/g, "&amp;").replace(/"/g, "&quot;")}">
-        <ATCWaypointType>Intersection</ATCWaypointType>
-        <WorldPosition>${position(lat, lon, alt)}</WorldPosition>
-      </ATCWaypoint>`;
-
-    const title = `${airportCode(origin) || "ORIGIN"} to ${airportCode(destination) || "DESTINATION"}`;
-
-    const altitude = Number(
-      String(firstValue(
-        plan.cruiseAltitude,
-        plan.general?.initial_altitude,
-        plan.raw?.general?.initial_altitude,
-        0
-      )).replace(/[^\d.-]/g, "")
-    );
-
-    const cruisingAlt = Number.isFinite(altitude) ? Math.round(altitude) : 0;
-
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<SimBase.Document Type="AceXML" version="1,0">
-  <Descr>mPilot MSFS Flight Plan</Descr>
-  <FlightPlan.FlightPlan>
-    <Title>${title.replace(/&/g, "&amp;")}</Title>
-    <Descr>Exported from vBriefing mPilot integration</Descr>
-    <FPType>IFR</FPType>
-    <CruisingAlt>${String(cruisingAlt)}</CruisingAlt>
-    <DepartureID>${airportCode(origin)}</DepartureID>
-    <DepartureLLA>${position(origin.lat ?? 0, origin.lon ?? 0, origin.elevation ?? 0)}</DepartureLLA>
-    <DestinationID>${airportCode(destination)}</DestinationID>
-    <DestinationLLA>${position(destination.lat ?? 0, destination.lon ?? 0, destination.elevation ?? 0)}</DestinationLLA>
-    <DepartureName>${String(origin.name || airportCode(origin)).replace(/&/g, "&amp;")}</DepartureName>
-    <DestinationName>${String(destination.name || airportCode(destination)).replace(/&/g, "&amp;")}</DestinationName>
-    <AppVersion>
-      <AppVersionMajor>1</AppVersionMajor>
-      <AppVersionBuild>0</AppVersionBuild>
-    </AppVersion>
-    ${fixes.map((fix) => waypoint(getIdent(fix), fix.lat, fix.lon, Number(fix.altitude_feet || fix.altitude || 0) || 0)).join("\n")}
-  </FlightPlan.FlightPlan>
-</SimBase.Document>`;
-
-    return xml;
-  }
-
-  function sendToMSFSPlanner() {
-    if (!flight?.origin || !flight?.destination) {
-      setSimbriefError("Import first a SimBrief OFP with a departure and destination.");
-      return;
+  function openMPilot() {
+    let target = mPilotUrl.trim();
+    if (!target) {
+      target = window.prompt("Enter your mPilot URL", "https://");
+      if (!target) return;
+      target = target.trim();
+      if (!/^https?:\/\//i.test(target)) target = `https://${target}`;
+      setMPilotUrl(target);
+      safeStorageSet("virtual-lido-mpilot-url", target);
     }
 
-    // Open the official planner first. The browser cannot silently inject a
-    // cross-origin route into planner.flightsimulator.com, so we provide the
-    // official .PLN file that can be loaded there and open the planner at the
-    // same time.
-    window.open(MSFS_FLIGHT_PLANNER_URL, "_blank", "noopener,noreferrer");
-
-    const xml = buildMSFSPln(flight);
-    const blob = new Blob([xml], { type: "application/xml" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${airportCode(flight.origin) || "ORIGIN"}-${airportCode(flight.destination) || "DESTINATION"}.pln`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
-
-    setSimbriefError("");
+    if (!/^https?:\/\//i.test(target)) target = `https://${target}`;
+    const handoff = {
+      source: "vBriefing",
+      version: 1,
+      importedAt: new Date().toISOString(),
+      flight: {
+        flightNumber: flight.flightNumber,
+        callsign: flight.callsign,
+        aircraftIcao: flight.aircraftIcao,
+        registration: flight.registration,
+        origin: flight.origin,
+        destination: flight.destination,
+        alternates: flight.alternates || [],
+        route: flight.route,
+        cruiseAltitude: flight.cruiseAltitude,
+        navlog: flight.navlog || [],
+      },
+    };
+    const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(handoff))));
+    const separator = target.includes("?") ? "&" : "?";
+    window.open(`${target}${separator}vbriefing=${encodeURIComponent(encoded)}`, "_blank", "noopener,noreferrer");
   }
 
   async function refreshLiveWeather(plan = flight) {
@@ -1321,7 +1302,6 @@ export default function App() {
               </label>
               {simbriefError && <div className="rounded-md bg-red-50 p-3 text-[12px] text-red-700">{simbriefError}</div>}
               {simbriefData && <div className="rounded-md bg-[#F3F5F7] p-3 text-[12px] text-gray-600">Imported: <strong>{airportCode(simbriefData.origin)} → {airportCode(simbriefData.destination)}</strong> · {simbriefData.flightNumber || simbriefData.callsign}</div>}
-              {simbriefData && <button onClick={sendToMSFSPlanner} className="flex h-[46px] w-full items-center justify-center gap-2 rounded-md border border-[#526C9B] bg-white font-semibold text-[#334A6D] hover:bg-gray-50"><span>Send to MSFS Flight Planner</span></button>}
               <div className="flex gap-3">
                 <button onClick={clearImportedPlan} disabled={!simbriefData || simbriefLoading} className="h-[46px] rounded-md border border-gray-300 bg-white px-4 font-semibold hover:bg-gray-50 disabled:opacity-50">Clear OFP</button>
                 <button onClick={importSimBrief} disabled={simbriefLoading} className="flex h-[46px] flex-1 items-center justify-center gap-2 rounded-md bg-[#0B1E48] font-semibold text-white hover:bg-[#071330] disabled:opacity-60">
@@ -1337,31 +1317,31 @@ export default function App() {
 
       {weatherChartsOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onClick={() => setWeatherChartsOpen(false)}>
-          <div className={`flex h-[92dvh] max-h-[92dvh] w-full max-w-[1100px] flex-col overflow-hidden rounded-xl shadow-2xl ${nightMode ? "bg-[#20242A] text-white" : "bg-white text-gray-900"}`} onClick={(event) => event.stopPropagation()}>
+          <div className={`flex max-h-[92dvh] w-full max-w-[1100px] flex-col overflow-hidden rounded-xl shadow-2xl ${nightMode ? "bg-[#20242A] text-white" : "bg-white text-gray-900"}`} onClick={(event) => event.stopPropagation()}>
             <div className={`flex shrink-0 items-center justify-between border-b px-4 py-3 ${nightMode ? "border-[#3A414A]" : "border-gray-200"}`}>
               <div><div className="text-[17px] font-semibold">Flight Weather Charts</div><div className={`text-[11px] ${nightMode ? "text-gray-400" : "text-gray-500"}`}>From the current SimBrief OFP</div></div>
               <button onClick={() => setWeatherChartsOpen(false)} className="rounded-md p-2 hover:bg-black/10"><X size={20} /></button>
             </div>
             <div className={`flex shrink-0 gap-2 border-b px-3 py-2 ${nightMode ? "border-[#3A414A] bg-[#191D22]" : "border-gray-200 bg-gray-50"}`}>
-              <button onClick={() => setWeatherChartsOpen(true)} className="rounded-md bg-[#0B1E48] px-3 py-2 text-[12px] font-semibold text-white">SIGWX ({flight.sigwxCharts?.length || 0})</button>
+              <button onClick={() => setWeatherChartsOpen(true)} className="rounded-md bg-[#0B1E48] px-3 py-2 text-[12px] font-semibold text-white">SIGWX ({loadedSigwxCharts.length})</button>
               <button
                 className={`rounded-md border px-3 py-2 text-[12px] font-semibold ${nightMode ? "border-[#4A515B] bg-[#2A3038] text-gray-100" : "border-gray-300 bg-white text-gray-700"}`}
                 onClick={() => setWeatherChartsOpen("vertical")}
               >Vertical Profile ({flight.verticalProfileCharts?.length || 0})</button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#E5E7EB] p-3">
+            <div className="min-h-0 overflow-y-auto bg-[#E5E7EB] p-3">
               {weatherChartsOpen === "vertical" ? (
                 flight.verticalProfileCharts?.length ? flight.verticalProfileCharts.map((chart, index) => (
-                  <div key={`${chart.url}-${index}`} className="mb-3 overflow-visible rounded-lg bg-white shadow-sm last:mb-0">
+                  <div key={`${chart.url}-${index}`} className="mb-3 overflow-hidden rounded-lg bg-white shadow-sm last:mb-0">
                     <div className="border-b border-gray-200 px-3 py-2 text-[12px] font-semibold">{chart.name}</div>
-                    <img src={chart.url} alt={chart.name} className="block h-auto w-full min-h-0 object-contain" loading="eager" />
+                    <img src={chart.url} alt={chart.name} className="block h-auto w-full" loading="eager" />
                   </div>
                 )) : <div className="p-10 text-center text-[13px] text-gray-500">This OFP does not contain a vertical profile chart. SimBrief Flight Maps must be enabled/detailed when generating the OFP.</div>
               ) : (
-                flight.sigwxCharts?.length ? flight.sigwxCharts.map((chart, index) => (
-                  <div key={`${chart.url}-${index}`} className="mb-3 overflow-visible rounded-lg bg-white shadow-sm last:mb-0">
+                loadedSigwxCharts.length ? loadedSigwxCharts.map((chart, index) => (
+                  <div key={`${chart.url}-${index}`} className="mb-3 overflow-hidden rounded-lg bg-white shadow-sm last:mb-0">
                     <div className="border-b border-gray-200 px-3 py-2 text-[12px] font-semibold">{chart.name}</div>
-                    <img src={chart.url} alt={chart.name} className="block h-auto w-full min-h-0 object-contain" loading="eager" />
+                    <img src={chart.url} alt={chart.name} className="block h-auto w-full" loading="eager" />
                   </div>
                 )) : <div className="p-10 text-center text-[13px] text-gray-500">This OFP does not contain a SIGWX chart.</div>
               )}
@@ -1411,7 +1391,7 @@ export default function App() {
                   </div>
                   <div className="grid grid-cols-2 gap-2 pt-3">
                     <button onClick={() => setActiveTab("map")} className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Go to Map</button>
-                    <button className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open in mPilot</button>
+                    <button onClick={openMPilot} className="h-[47px] rounded-md border border-gray-300 bg-[#F8F8F8] font-semibold hover:bg-gray-100">Open in mPilot</button>
                   </div>
                 </section>
                 <DashboardWeatherCard flight={flight} airports={airportsForWeather} selected={weatherAirport} onChange={setWeatherAirport} live={weatherLive} loading={weatherLoading} onRefresh={() => refreshLiveWeather(flight)} onOpenCharts={() => setWeatherChartsOpen(true)} />
@@ -1907,28 +1887,6 @@ function DynamicMap({ flight, navFixes, airports, compact = false, showLabels = 
 function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onToggleLabels }) {
   const containerRef = useRef(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const [uirGeoJson, setUirGeoJson] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    try {
-      const cached = safeStorageGet("virtual-lido-uir-geojson-v1");
-      if (cached) setUirGeoJson(JSON.parse(cached));
-    } catch {
-      // Ignore invalid cache and fetch fresh data below.
-    }
-    fetch(UIR_GEOJSON_URL)
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error("UIR data unavailable")))
-      .then((data) => {
-        if (cancelled || !data?.features) return;
-        setUirGeoJson(data);
-        safeStorageSet("virtual-lido-uir-geojson-v1", JSON.stringify(data));
-      })
-      .catch(() => {
-        // Cached UIR data remains usable when the network is unavailable.
-      });
-    return () => { cancelled = true; };
-  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return undefined;
@@ -1984,42 +1942,6 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
     .map((p, index) => `${index === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
     .join(" ");
 
-  const uirPaths = useMemo(() => {
-    if (!view || !uirGeoJson?.features?.length) return [];
-    const features = uirGeoJson.features.filter((feature) => {
-      const props = feature?.properties || {};
-      const airspace = String(firstValue(props.AV_AIRSPAC, props.TYPE, props.type, props.type_code, props.LOCAL_TYPE, "")).toUpperCase();
-      const name = String(firstValue(props.AV_NAME, props.name, "")).toUpperCase();
-      return airspace.endsWith("UIR") || airspace.includes("UIR") || /\bUIR\b/.test(name);
-    });
-    const paths = [];
-    const addRing = (ring, featureIndex, ringIndex) => {
-      if (!Array.isArray(ring) || ring.length < 2) return;
-      const commands = [];
-      ring.forEach((coord, index) => {
-        const lon = Number(coord?.[0]);
-        const lat = Number(coord?.[1]);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-        const point = project(lat, lon);
-        if (!point) return;
-        commands.push(`${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`);
-      });
-      if (commands.length > 1) paths.push({ d: `${commands.join(" ")} Z`, key: `uir-${featureIndex}-${ringIndex}` });
-    };
-    features.forEach((feature, featureIndex) => {
-      const geometry = feature?.geometry;
-      if (!geometry) return;
-      if (geometry.type === "Polygon") {
-        geometry.coordinates?.forEach((ring, ringIndex) => addRing(ring, featureIndex, ringIndex));
-      } else if (geometry.type === "MultiPolygon") {
-        geometry.coordinates?.forEach((polygon, polygonIndex) => {
-          polygon?.forEach((ring, ringIndex) => addRing(ring, featureIndex, `${polygonIndex}-${ringIndex}`));
-        });
-      }
-    });
-    return paths;
-  }, [uirGeoJson, view, size.width, size.height]);
-
   const grid = useMemo(() => {
     if (!view) return [];
     const latSpan = Math.abs(view.bounds.maxLat - view.bounds.minLat);
@@ -2046,11 +1968,11 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
   return (
     <div ref={containerRef} className={`relative h-full w-full overflow-hidden bg-[#E8E8E3] ${compact ? "rounded-md" : ""}`}>
       {tiles.map((tile) => (
-        <img key={`${tile.x}-${tile.y}-${tile.z}`} src={tile.url} alt="" className="pointer-events-none absolute z-0 select-none" style={{ left: tile.left, top: tile.top, width: 256, height: 256, opacity: 0.86, filter: "grayscale(82%) saturate(55%) contrast(88%) brightness(108%)" }} draggable={false} loading="eager" />
+        <img key={`${tile.x}-${tile.y}-${tile.z}`} src={tile.url} alt="" className="pointer-events-none absolute z-0 select-none" style={{ left: tile.left, top: tile.top, width: 256, height: 256, opacity: 0.92, filter: "saturate(82%) contrast(92%) brightness(104%)" }} draggable={false} loading="eager" />
       ))}
 
-      <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/25" />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.08),rgba(235,235,225,.14))]" />
+      <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/8" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,.035),rgba(235,235,225,.055))]" />
 
       {/* Full-surface chart grid. This is intentionally independent from the geographic bounds so the grid always covers the complete map, including the margins. */}
       <div
@@ -2060,21 +1982,6 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
 
       {view && (
         <svg className="pointer-events-none absolute inset-0 z-[3] h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
-          {/* UIR boundaries are deliberately rendered BEFORE the route so the flight path always sits on top, exactly like the SimBrief map. */}
-          {uirPaths.map((boundary) => (
-            <path
-              key={boundary.key}
-              d={boundary.d}
-              className="lido-uir-boundary"
-              fill="none"
-              stroke="#4FA84B"
-              strokeWidth="1.15"
-              strokeDasharray="7 5"
-              opacity="0.82"
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
-
           {/* Geographic graticule: full map width/height, with coordinate labels at the map edges. */}
           <g className="lido-grid-lines">
             {grid.map((line, index) => (
@@ -2129,7 +2036,7 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
 
       {showLabels && <div className="absolute left-2 top-2 rounded-sm bg-white/88 px-2 py-1 text-[9px] font-semibold text-gray-600 shadow-sm">ENROUTE</div>}
       {onToggleLabels && <button onClick={onToggleLabels} className="absolute right-2 top-2 z-10 rounded-sm bg-white/88 px-2 py-1 text-[9px] font-semibold text-gray-600 shadow-sm">{showLabels ? "Hide" : "Show"}</button>}
-      <div className="absolute bottom-1 right-1 rounded bg-white/82 px-1.5 py-0.5 text-[8px] text-gray-500">© OpenStreetMap contributors</div>
+      <div className="absolute bottom-1 right-1 rounded bg-white/82 px-1.5 py-0.5 text-[8px] text-gray-500">© OpenTopoMap · © OpenStreetMap contributors</div>
     </div>
   );
 }
@@ -2197,7 +2104,7 @@ function makeTiles(zoom, bounds, width, height) {
   for (let y = Math.max(0, minY - 2); y <= Math.min(tileCount - 1, maxY + 2); y += 1) {
     for (let x = minX - 2; x <= maxX + 2; x += 1) {
       const wrappedX = ((x % tileCount) + tileCount) % tileCount;
-      tiles.push({ z: zoom, x: wrappedX, y, left: x * 256 - topLeft.x, top: y * 256 - topLeft.y, url: `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${y}.png` });
+      tiles.push({ z: zoom, x: wrappedX, y, left: x * 256 - topLeft.x, top: y * 256 - topLeft.y, url: `https://tile.opentopomap.org/${zoom}/${wrappedX}/${y}.png` });
     }
   }
   return tiles;
