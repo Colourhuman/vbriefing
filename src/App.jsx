@@ -1995,6 +1995,10 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
           }}
           draggable={false}
           loading="eager"
+          referrerPolicy="strict-origin-when-cross-origin"
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+          }}
         />
       ))}
 
@@ -2104,7 +2108,7 @@ function fitMapView(points, width, height) {
   let maxLon = Math.max(...lons);
   if (Math.abs(maxLat - minLat) < 0.25) { minLat -= 0.12; maxLat += 0.12; }
   if (Math.abs(maxLon - minLon) < 0.4) { minLon -= 0.2; maxLon += 0.2; }
-  const zoom = Math.max(5, Math.min(9, chooseZoom(minLat, maxLat, minLon, maxLon, width * 0.82, height * 0.82)));
+  const zoom = Math.max(2, Math.min(12, chooseZoom(minLat, maxLat, minLon, maxLon, width * 0.82, height * 0.82)));
   const centerLat = (minLat + maxLat) / 2;
   const centerLon = (minLon + maxLon) / 2;
   const center = geoToWorld(centerLat, centerLon, zoom);
@@ -2112,7 +2116,7 @@ function fitMapView(points, width, height) {
 }
 
 function chooseZoom(minLat, maxLat, minLon, maxLon, width, height) {
-  for (let z = 9; z >= 5; z -= 1) {
+  for (let z = 12; z >= 2; z -= 1) {
     const a = geoToWorld(maxLat, minLon, z);
     const b = geoToWorld(minLat, maxLon, z);
     const spanX = Math.abs(b.x - a.x) * 1.12;
@@ -2143,11 +2147,8 @@ function makeTiles(zoom, bounds, width, height) {
   const tiles = [];
   const tileCount = 2 ** zoom;
 
-  // Aviation chart background: FAA/Esri IFR High Enroute chart tiles.
-  // This is much closer to an EFB/Lido-style aviation map than a normal
-  // street basemap. The service is a cached Web-Mercator ArcGIS MapServer.
-  const arcgisBase = "https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/IFR_High/MapServer";
-
+  // OpenStreetMap Standard XYZ tiles.
+  // Official URL: https://tile.openstreetmap.org/{z}/{x}/{y}.png
   for (let y = Math.max(0, minY - 1); y <= Math.min(tileCount - 1, maxY + 1); y += 1) {
     for (let x = minX - 1; x <= maxX + 1; x += 1) {
       const wrappedX = ((x % tileCount) + tileCount) % tileCount;
@@ -2157,8 +2158,8 @@ function makeTiles(zoom, bounds, width, height) {
         y,
         left: x * 256 - topLeft.x,
         top: y * 256 - topLeft.y,
-        url: `${arcgisBase}/tile/${zoom}/${y}/${wrappedX}`,
-        provider: "arcgis-ifr",
+        url: `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${y}.png`,
+        provider: "openstreetmap",
       });
     }
   }
