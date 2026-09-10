@@ -802,7 +802,7 @@ const NIGHT_MODE_CSS = `
 [data-night="true"] [class*="bg-[#F8F8F8]"],
 [data-night="true"] [class*="bg-[#F5F5F5]"],
 [data-night="true"] [class*="bg-[#F0F1F2]"] { background:#2b3036 !important; }
-[data-night="true"] img[src*="tile.openstreetmap.org"] { filter: grayscale(82%) saturate(35%) contrast(92%) brightness(46%) !important; }
+[data-night="true"] img[src*="tiles.arcgis.com"] { filter: grayscale(82%) saturate(30%) contrast(95%) brightness(46%) !important; }
 [data-night="true"] .lido-grid-lines line { stroke:#AEB5BC !important; opacity:.30 !important; }
 [data-night="true"] .lido-uir-boundary { stroke:#6FC96A !important; opacity:.72 !important; }
 [data-night="true"] [class*="bg-[#F4F3ED]"],
@@ -1980,7 +1980,22 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
   return (
     <div ref={containerRef} className={`relative h-full w-full overflow-hidden bg-[#E8E8E3] ${compact ? "rounded-md" : ""}`}>
       {tiles.map((tile) => (
-        <img key={`${tile.x}-${tile.y}-${tile.z}`} src={tile.url} alt="" className="pointer-events-none absolute z-0 select-none" style={{ left: tile.left, top: tile.top, width: 256, height: 256, opacity: 0.86, filter: "grayscale(86%) saturate(42%) contrast(91%) brightness(112%) sepia(7%)" }} draggable={false} loading="eager" />
+        <img
+          key={`${tile.x}-${tile.y}-${tile.z}`}
+          src={tile.url}
+          alt=""
+          className="pointer-events-none absolute z-0 select-none"
+          style={{
+            left: tile.left,
+            top: tile.top,
+            width: 256,
+            height: 256,
+            opacity: 0.96,
+            filter: "saturate(82%) contrast(96%) brightness(108%)",
+          }}
+          draggable={false}
+          loading="eager"
+        />
       ))}
 
       <div className="pointer-events-none absolute inset-0 bg-[#F4F3ED]/25" />
@@ -2061,8 +2076,8 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
 
       {showLabels && <div className="absolute left-2 top-2 rounded-sm bg-white/88 px-2 py-1 text-[9px] font-semibold text-gray-600 shadow-sm">ENROUTE</div>}
       {onToggleLabels && <button onClick={onToggleLabels} className="absolute right-2 top-2 z-10 rounded-sm bg-white/88 px-2 py-1 text-[9px] font-semibold text-gray-600 shadow-sm">{showLabels ? "Hide" : "Show"}</button>}
-      <div className="absolute bottom-2 left-2 z-10 rounded bg-white/80 px-2 py-1 text-[8px] text-gray-600 shadow-sm">TEMPORARY LIDO-STYLE MAP · TOPOGRAPHY PLACEHOLDER</div>
-      <div className="absolute bottom-1 right-1 rounded bg-white/82 px-1.5 py-0.5 text-[8px] text-gray-500">© OpenStreetMap contributors</div>
+      <div className="absolute bottom-2 left-2 z-10 rounded bg-white/88 px-2 py-1 text-[8px] font-medium text-gray-600 shadow-sm">IFR HIGH · ENROUTE</div>
+      <div className="absolute bottom-1 right-1 rounded bg-white/88 px-1.5 py-0.5 text-[8px] text-gray-500">© Esri · FAA Aeronautical Information Services</div>
     </div>
   );
 }
@@ -2127,10 +2142,24 @@ function makeTiles(zoom, bounds, width, height) {
   const topLeft = { x: center.x - width / 2, y: center.y - height / 2 };
   const tiles = [];
   const tileCount = 2 ** zoom;
-  for (let y = Math.max(0, minY - 2); y <= Math.min(tileCount - 1, maxY + 2); y += 1) {
-    for (let x = minX - 2; x <= maxX + 2; x += 1) {
+
+  // Aviation chart background: FAA/Esri IFR High Enroute chart tiles.
+  // This is much closer to an EFB/Lido-style aviation map than a normal
+  // street basemap. The service is a cached Web-Mercator ArcGIS MapServer.
+  const arcgisBase = "https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/IFR_High/MapServer";
+
+  for (let y = Math.max(0, minY - 1); y <= Math.min(tileCount - 1, maxY + 1); y += 1) {
+    for (let x = minX - 1; x <= maxX + 1; x += 1) {
       const wrappedX = ((x % tileCount) + tileCount) % tileCount;
-      tiles.push({ z: zoom, x: wrappedX, y, left: x * 256 - topLeft.x, top: y * 256 - topLeft.y, url: `https://basemaps.cartocdn.com/light_all/${zoom}/${wrappedX}/${y}.png` });
+      tiles.push({
+        z: zoom,
+        x: wrappedX,
+        y,
+        left: x * 256 - topLeft.x,
+        top: y * 256 - topLeft.y,
+        url: `${arcgisBase}/tile/${zoom}/${y}/${wrappedX}`,
+        provider: "arcgis-ifr",
+      });
     }
   }
   return tiles;
