@@ -1895,6 +1895,17 @@ function DynamicMap({ flight, navFixes, airports, compact = false, showLabels = 
   return <SlippyRouteMap flight={flight} navFixes={navFixes} airports={airports} compact={compact} showLabels={showLabels} onToggleLabels={onToggleLabels} />;
 }
 
+
+const MAP_TILE_STYLE = `
+.map-tile {
+  transition: filter 180ms ease, opacity 180ms ease;
+  filter: saturate(82%) contrast(96%) brightness(108%);
+}
+[data-night="true"] .map-tile {
+  filter: invert(88%) hue-rotate(180deg) brightness(58%) contrast(92%) saturate(42%) !important;
+}
+`;
+
 function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onToggleLabels }) {
   const containerRef = useRef(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -1979,19 +1990,19 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
 
   return (
     <div ref={containerRef} className={`relative h-full w-full overflow-hidden bg-[#E8E8E3] ${compact ? "rounded-md" : ""}`}>
+      <style>{MAP_TILE_STYLE}</style>
       {tiles.map((tile) => (
         <img
           key={`${tile.x}-${tile.y}-${tile.z}`}
           src={tile.url}
           alt=""
-          className="pointer-events-none absolute z-0 select-none"
+          className="map-tile pointer-events-none absolute z-0 select-none"
           style={{
             left: tile.left,
             top: tile.top,
             width: 256,
             height: 256,
             opacity: 0.96,
-            filter: "saturate(82%) contrast(96%) brightness(108%)",
           }}
           draggable={false}
           loading="eager"
