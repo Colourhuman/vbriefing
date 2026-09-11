@@ -803,7 +803,6 @@ const NIGHT_MODE_CSS = `
 [data-night="true"] [class*="bg-[#F5F5F5]"],
 [data-night="true"] [class*="bg-[#F0F1F2]"] { background:#2b3036 !important; }
 [data-night="true"] img[src*="tiles.arcgis.com"] { filter: grayscale(82%) saturate(30%) contrast(95%) brightness(46%) !important; }
-[data-night="true"] .lido-grid-lines line { stroke:#AEB5BC !important; opacity:.30 !important; }
 [data-night="true"] .lido-uir-boundary { stroke:#6FC96A !important; opacity:.72 !important; }
 [data-night="true"] [class*="bg-[#F4F3ED]"],
 [data-night="true"] [class*="bg-[#E8E8E3]"] { background:rgba(25,29,34,.42) !important; }
@@ -1965,27 +1964,6 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
     .map((p, index) => `${index === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`)
     .join(" ");
 
-  const grid = useMemo(() => {
-    if (!view) return [];
-    const latSpan = Math.abs(view.bounds.maxLat - view.bounds.minLat);
-    const lonSpan = Math.abs(view.bounds.maxLon - view.bounds.minLon);
-    const latStep = latSpan > 12 ? 2 : latSpan > 6 ? 1 : latSpan > 3 ? 0.5 : latSpan > 1 ? 0.25 : 0.1;
-    const lonStep = lonSpan > 16 ? 2 : lonSpan > 8 ? 1 : lonSpan > 4 ? 0.5 : lonSpan > 1.5 ? 0.25 : 0.1;
-    const lines = [];
-    const startLat = Math.floor(view.bounds.minLat / latStep) * latStep;
-    const startLon = Math.floor(view.bounds.minLon / lonStep) * lonStep;
-    for (let lat = startLat; lat <= view.bounds.maxLat + latStep; lat += latStep) {
-      const a = project(lat, view.bounds.minLon);
-      const b = project(lat, view.bounds.maxLon);
-      if (a && b) lines.push({ type: "lat", value: Number(lat.toFixed(4)), a, b });
-    }
-    for (let lon = startLon; lon <= view.bounds.maxLon + lonStep; lon += lonStep) {
-      const a = project(view.bounds.minLat, lon);
-      const b = project(view.bounds.maxLat, lon);
-      if (a && b) lines.push({ type: "lon", value: Number(lon.toFixed(4)), a, b });
-    }
-    return lines;
-  }, [view, size.width, size.height]);
 
 
   return (
@@ -2037,12 +2015,6 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
       {view && (
         <svg className="pointer-events-none absolute inset-0 z-[3] h-full w-full" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none">
 
-          {/* Geographic graticule: full map width/height, with coordinate labels at the map edges. */}
-          <g className="lido-grid-lines">
-            {grid.map((line, index) => (
-              <line key={`grid-${line.type}-${line.value}-${index}`} x1={line.a.x} y1={line.a.y} x2={line.b.x} y2={line.b.y} stroke="#66756D" strokeWidth="0.55" strokeDasharray="2 5" opacity="0.18" />
-            ))}
-          </g>
 
           {/* Route is intentionally the top SVG layer over UIR boundaries and the graticule. */}
           {path && <path d={path} fill="none" stroke="#050505" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />}
@@ -2091,8 +2063,8 @@ function SlippyRouteMap({ flight, navFixes, airports, compact, showLabels, onTog
 
       {showLabels && <div className="absolute left-2 top-2 rounded-sm bg-white/88 px-2 py-1 text-[9px] font-semibold text-gray-600 shadow-sm">ENROUTE</div>}
       {onToggleLabels && <button onClick={onToggleLabels} className="absolute right-2 top-2 z-10 rounded-sm bg-white/88 px-2 py-1 text-[9px] font-semibold text-gray-600 shadow-sm">{showLabels ? "Hide" : "Show"}</button>}
-      <div className="absolute bottom-2 left-2 z-10 rounded bg-white/88 px-2 py-1 text-[8px] font-medium text-gray-600 shadow-sm">IFR HIGH · ENROUTE</div>
-      <div className="absolute bottom-1 right-1 rounded bg-white/88 px-1.5 py-0.5 text-[8px] text-gray-500">© Esri · FAA Aeronautical Information Services</div>
+      <div className="absolute bottom-2 left-2 z-10 rounded bg-white/88 px-2 py-1 text-[8px] font-medium text-gray-600 shadow-sm">ENROUTE</div>
+      <div className="absolute bottom-1 right-1 rounded bg-white/88 px-1.5 py-0.5 text-[8px] text-gray-500">© OpenStreetMap contributors</div>
     </div>
   );
 }
