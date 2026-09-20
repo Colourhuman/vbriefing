@@ -39,6 +39,7 @@ const PRE_RELEASE_ACCOUNTS = [
   { username: "Milo", password: "Milo2401" },
   { username: "Leon", password: "Goat" },
   { username: "Germansimaviation", password: "240110" },
+  { username: "Beta", password: "240110" },
 ];
 
 // Publicly available simplified FIR/UIR GeoJSON used only for visual map boundaries.
